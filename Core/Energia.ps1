@@ -99,8 +99,9 @@ function Set-PlanEnergia {
 
     [void](& powercfg.exe /setactive $guidTexto)
     if ($LASTEXITCODE -ne 0) {
-        Set-JournalEntradaEstado -Entrada $registro -Estado Fallida -Detalle "powercfg devolvió el código $LASTEXITCODE"
         Write-Log -Nivel ERROR -Mensaje "Plan de energía: powercfg /setactive devolvió el código $LASTEXITCODE al activar '$($destino.Nombre)'."
+        # powercfg falló sin cambiar el plan: el cambio no debe quedar en el journal
+        Remove-JournalEntrada -Entrada $registro
         return 'Fallido'
     }
     Set-JournalEntradaEstado -Entrada $registro -Estado Aplicada

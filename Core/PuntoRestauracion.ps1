@@ -1,28 +1,28 @@
 ﻿# Core/PuntoRestauracion.ps1
-# Punto de restauración de Windows mediante la clase CIM SystemRestore (root\default), no con
-# Checkpoint-Computer (que no existe en PowerShell 7).
+# Punto de restauración de Windows.
+#
+# MÉTODO (decisión tomada tras probar en una VM con Windows 11 24H2):
+#   - Windows PowerShell 5.1 (objetivo principal): Checkpoint-Computer -RestorePointType MODIFY_SETTINGS.
+#   - PowerShell 7 (donde Checkpoint-Computer no existe): CIM SystemRestore.CreateRestorePoint, solo como respaldo.
+#   Motivo: en la VM, CreateRestorePoint por CIM con SystemRestorePointCreationFrequency = 0 terminó sin
+#   crear el punto (en menos de un segundo, había uno de las últimas 24 h), mientras que Checkpoint-Computer
+#   con el mismo ajuste sí lo creó. La causa exacta no está determinada (ver Pruebas/Diagnostico-PuntoRestauracion.ps1).
+#   Por eso el éxito NUNCA se asume: se comprueba comparando los SequenceNumber antes y después, y del
+#   método CIM se registra siempre el ReturnValue.
 #
 # Datos verificados en Microsoft Learn (CreateRestorePoint, clase SystemRestore):
 #   - CreateRestorePoint(String Description, uint32 RestorePointType, uint32 EventType)
 #     MODIFY_SETTINGS = 12, BEGIN_SYSTEM_CHANGE = 100.
 #   - Por defecto Windows OMITE el punto (y devuelve S_OK) si hubo otro en las últimas 24 h.
 #     Se evita con el DWORD SystemRestorePointCreationFrequency = 0 en
-#     HKLM\Software\Microsoft\Windows NT\CurrentVersion\SystemRestore. Por eso se comprueba el éxito
-#     comparando los SequenceNumber antes y después, no con el valor devuelto.
+#     HKLM\Software\Microsoft\Windows NT\CurrentVersion\SystemRestore.
 #   - SystemRestore.Enable(String Drive) activa la protección; devuelve sin esperar.
 #
 # Core/ NO activa la Protección del sistema por su cuenta: devuelve un motivo claro y la consola o la
 # interfaz preguntan al usuario antes de llamar a Enable-ProteccionSistema (usa espacio en disco).
 #
-# Detección de "protección desactivada / sin espacio" (HEURÍSTICA, por validar en VM): política
-# DisableSR=1, o ausencia de Win32_ShadowStorage para la unidad del sistema, o MaxSpace = 0.
-
-function Get-NumerosPuntosRestauracion {
-    # Auxiliar interna: SequenceNumber de los puntos existentes.
-    $lista = @(Get-CimInstance -Namespace 'root/default' -ClassName SystemRestore -ErrorAction Stop)
-    return @($lista | ForEach-Object { [int64]$_.SequenceNumber })
-}
-
+# Detección de "protección desactivada / sin espacio" (confirmada en la VM para el caso "activa"):
+# política DisableSR=1, o ausencia de Win32_ShadowStorage para la unidad del sistema, o MaxSpace = 0.
 function Get-EstadoProteccionSistema {
     <#
     .SYNOPSIS
@@ -59,15 +59,60 @@ function Get-EstadoProteccionSistema {
     }
 }
 
+function ConvertFrom-FechaPuntoRestauracion {
+    # Auxiliar interna: fecha DMTF de WMI ("20261016033524.000000-000") -> [datetime] local, o $null.
+    param(
+        [string]$Texto
+    )
+
+    if (-not $Texto) { return $null }
+    try {
+        Add-Type -AssemblyName System.Management -ErrorAction SilentlyContinue
+        return [System.Management.ManagementDateTimeConverter]::ToDateTime($Texto)
+    }
+    catch { }
+    try {
+        return [datetime]::ParseExact($Texto.Substring(0, 14), 'yyyyMMddHHmmss', [System.Globalization.CultureInfo]::InvariantCulture)
+    }
+    catch { return $null }
+}
+
+function Get-PuntosRestauracion {
+    <#
+    .SYNOPSIS
+        Lista los puntos de restauración existentes (Secuencia, Descripcion, Fecha), el más reciente primero.
+    .EXAMPLE
+        Get-PuntosRestauracion | Format-Table
+    #>
+    $lista = @(Get-CimInstance -Namespace 'root/default' -ClassName SystemRestore -ErrorAction Stop)
+    $puntos = @($lista | ForEach-Object {
+            [pscustomobject]@{
+                Secuencia   = [int64]$_.SequenceNumber
+                Descripcion = [string]$_.Description
+                Fecha       = (ConvertFrom-FechaPuntoRestauracion -Texto $_.CreationTime)
+            }
+        })
+    return @($puntos | Sort-Object Secuencia -Descending)
+}
+
 function New-ResultadoPunto {
     # Auxiliar interna: objeto de resultado de New-PuntoRestauracion.
     param(
         [bool]$Creado,
         [string]$Motivo,
         [string]$Detalle,
-        $Secuencia = $null
+        [string]$Metodo = '',
+        $Secuencia = $null,
+        $PuntoReciente = $null
     )
-    return [pscustomobject]@{ Creado = $Creado; Motivo = $Motivo; Detalle = $Detalle; SequenceNumber = $Secuencia }
+    return [pscustomobject]@{
+        Creado         = $Creado
+        Motivo         = $Motivo
+        Detalle        = $Detalle
+        Metodo         = $Metodo
+        SequenceNumber = $Secuencia
+        PuntoReciente  = $PuntoReciente
+    }
 }
 
 function New-PuntoRestauracion {
@@ -75,12 +120,17 @@ function New-PuntoRestauracion {
     .SYNOPSIS
         Crea un punto de restauración. No pregunta nada ni activa la protección: devuelve un motivo.
     .DESCRIPTION
+        Método: Checkpoint-Computer en Windows PowerShell 5.1; CIM SystemRestore solo como respaldo
+        (PowerShell 7, donde Checkpoint-Computer no existe). Ver el comentario al inicio del archivo.
         Ajusta temporalmente SystemRestorePointCreationFrequency = 0 (a través del journal, para
         sobrevivir a un cierre brusco) y lo revierte SIEMPRE en un bloque finally.
+        El éxito se comprueba comparando los SequenceNumber antes y después.
     .OUTPUTS
-        Objeto con Creado (bool), Motivo, Detalle y SequenceNumber. Motivos:
-        Creado, BloqueadaPorDirectiva, Desactivada, SinEspacioAsignado, NoSeCreo (Windows lo omitió),
-        ErrorDeSistema.
+        Objeto con Creado (bool), Motivo, Detalle, Metodo, SequenceNumber y PuntoReciente. Motivos:
+        Creado, BloqueadaPorDirectiva, Desactivada, SinEspacioAsignado,
+        YaExisteReciente (Windows omitió el punto porque hay uno de las últimas 24 h; PuntoReciente trae
+        su número, descripción y fecha para que la consola/interfaz ofrezca continuar con él o cancelar),
+        NoSeCreo (omitido sin causa conocida) y ErrorDeSistema.
     .EXAMPLE
         $r = New-PuntoRestauracion -Descripcion 'OptiLow - prueba'
         if (-not $r.Creado) { "$($r.Motivo): $($r.Detalle)" }
@@ -98,47 +148,75 @@ function New-PuntoRestauracion {
     }
     if ($Descripcion.Length -gt 200) { $Descripcion = $Descripcion.Substring(0, 200) }
 
+    $metodo = 'CIM'
+    if (($PSVersionTable.PSEdition -ne 'Core') -and (Get-Command -Name 'Checkpoint-Computer' -ErrorAction SilentlyContinue)) {
+        $metodo = 'Checkpoint-Computer'
+    }
+
     $rutaFrecuencia = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore'
     $nombreFrecuencia = 'SystemRestorePointCreationFrequency'
     $ajuste = $null
     try {
+        $antes = @(Get-PuntosRestauracion)
+        $maxAntes = -1
+        if ($antes.Count -gt 0) { $maxAntes = $antes[0].Secuencia }
+
         $ajuste = Set-RegistroValorInterno -Ruta $rutaFrecuencia -Nombre $nombreFrecuencia -Valor 0 -Tipo DWord
         if ($ajuste.Estado -eq 'Fallido') {
             Write-Log -Nivel WARN -Mensaje 'No se pudo ajustar la frecuencia de puntos de restauración; si ya hay un punto de las últimas 24 h, Windows omitirá este.'
         }
 
-        $antes = @(Get-NumerosPuntosRestauracion)
-        $maxAntes = -1
-        if ($antes.Count -gt 0) { $maxAntes = ($antes | Measure-Object -Maximum).Maximum }
-
-        Write-Log -Mensaje "Creando punto de restauración: '$Descripcion'..."
-        $r = Invoke-CimMethod -Namespace 'root/default' -ClassName SystemRestore -MethodName CreateRestorePoint -Arguments @{
-            Description      = $Descripcion
-            RestorePointType = [uint32]12
-            EventType        = [uint32]100
-        } -ErrorAction Stop
-
-        if ([int64]$r.ReturnValue -ne 0) {
-            $detalle = "CreateRestorePoint devolvió el código $($r.ReturnValue)."
-            Write-Log -Nivel WARN -Mensaje "Punto de restauración no creado: $detalle"
-            return New-ResultadoPunto -Creado $false -Motivo 'ErrorDeSistema' -Detalle $detalle
+        Write-Log -Mensaje "Creando punto de restauración: '$Descripcion' (método: $metodo)..."
+        if ($metodo -eq 'Checkpoint-Computer') {
+            Checkpoint-Computer -Description $Descripcion -RestorePointType MODIFY_SETTINGS -WarningAction SilentlyContinue -WarningVariable avisosCheckpoint -ErrorAction Stop
+            foreach ($aviso in @($avisosCheckpoint)) {
+                Write-Log -Nivel WARN -Mensaje "Checkpoint-Computer avisó: $aviso"
+            }
+        }
+        else {
+            $r = Invoke-CimMethod -Namespace 'root/default' -ClassName SystemRestore -MethodName CreateRestorePoint -Arguments @{
+                Description      = $Descripcion
+                RestorePointType = [uint32]12
+                EventType        = [uint32]100
+            } -ErrorAction Stop
+            # No se asume S_OK: se registra siempre el valor devuelto
+            Write-Log -Mensaje "CreateRestorePoint devolvió ReturnValue=$($r.ReturnValue)."
+            if ([int64]$r.ReturnValue -ne 0) {
+                $detalle = "CreateRestorePoint devolvió el código $($r.ReturnValue)."
+                Write-Log -Nivel WARN -Mensaje "Punto de restauración no creado: $detalle"
+                return New-ResultadoPunto -Creado $false -Motivo 'ErrorDeSistema' -Detalle $detalle -Metodo $metodo
+            }
         }
 
-        $despues = @(Get-NumerosPuntosRestauracion)
-        $nuevos = @($despues | Where-Object { $_ -gt $maxAntes })
+        # Comprobar con los SequenceNumber (unos segundos de margen: la lista puede tardar en reflejarlo)
+        $nuevos = @()
+        for ($i = 0; $i -lt 3; $i++) {
+            $despues = @(Get-PuntosRestauracion)
+            $nuevos = @($despues | Where-Object { $_.Secuencia -gt $maxAntes })
+            if ($nuevos.Count -gt 0) { break }
+            Start-Sleep -Seconds 1
+        }
         if ($nuevos.Count -gt 0) {
-            $numero = ($nuevos | Measure-Object -Maximum).Maximum
-            Write-Log -Nivel OK -Mensaje "Punto de restauración creado (número $numero)."
-            return New-ResultadoPunto -Creado $true -Motivo 'Creado' -Detalle "Punto número $numero." -Secuencia $numero
+            $numero = $nuevos[0].Secuencia
+            Write-Log -Nivel OK -Mensaje "Punto de restauración creado (número $numero, método $metodo)."
+            return New-ResultadoPunto -Creado $true -Motivo 'Creado' -Detalle "Punto número $numero." -Metodo $metodo -Secuencia $numero
         }
-        $detalle = 'Windows no creó el punto (lo omitió sin error; puede ser el límite de frecuencia u otra causa).'
+
+        # Windows lo omitió: ¿hay uno reciente (últimas 24 h)?
+        $reciente = $antes | Where-Object { $_.Fecha -and (((Get-Date) - $_.Fecha).TotalHours -lt 24) } | Select-Object -First 1
+        if ($reciente) {
+            $detalle = "Ya existe un punto de restauración de las últimas 24 h: '{0}' creado el {1:yyyy-MM-dd HH:mm:ss} (número {2}). Windows no creó otro." -f $reciente.Descripcion, $reciente.Fecha, $reciente.Secuencia
+            Write-Log -Nivel WARN -Mensaje "Punto de restauración no creado: $detalle"
+            return New-ResultadoPunto -Creado $false -Motivo 'YaExisteReciente' -Detalle $detalle -Metodo $metodo -PuntoReciente $reciente
+        }
+        $detalle = 'Windows no creó el punto y no se encontró ninguno reciente que lo explique.'
         Write-Log -Nivel WARN -Mensaje "Punto de restauración no creado: $detalle"
-        return New-ResultadoPunto -Creado $false -Motivo 'NoSeCreo' -Detalle $detalle
+        return New-ResultadoPunto -Creado $false -Motivo 'NoSeCreo' -Detalle $detalle -Metodo $metodo
     }
     catch {
         $detalle = $_.Exception.Message
-        Write-Log -Nivel ERROR -Mensaje "Punto de restauración no creado: $detalle"
-        return New-ResultadoPunto -Creado $false -Motivo 'ErrorDeSistema' -Detalle $detalle
+        Write-Log -Nivel ERROR -Mensaje "Punto de restauración no creado ($metodo): $detalle"
+        return New-ResultadoPunto -Creado $false -Motivo 'ErrorDeSistema' -Detalle $detalle -Metodo $metodo
     }
     finally {
         # Revertir SIEMPRE el ajuste temporal de la frecuencia

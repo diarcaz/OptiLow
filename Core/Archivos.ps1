@@ -114,8 +114,17 @@ function Write-ArchivoTexto {
         return 'Cambiado'
     }
     catch {
-        Set-JournalEntradaEstado -Entrada $registro -Estado Fallida -Detalle $_.Exception.Message
-        Write-Log -Nivel ERROR -Mensaje "Archivo: no se pudo escribir '$Ruta': $($_.Exception.Message)"
+        $mensajeError = $_.Exception.Message
+        Write-Log -Nivel ERROR -Mensaje "Archivo: no se pudo escribir '$Ruta': $mensajeError"
+        # Si el archivo quedó como estaba, el cambio no debe quedar en el journal
+        $intacto = $false
+        try {
+            if ($existe) { $intacto = ((Get-FileHash -LiteralPath $Ruta -Algorithm SHA256).Hash -eq $hashOriginal) }
+            else { $intacto = -not (Test-Path -LiteralPath $Ruta) }
+        }
+        catch { }
+        if ($intacto) { Remove-JournalEntrada -Entrada $registro }
+        else { Set-JournalEntradaEstado -Entrada $registro -Estado Fallida -Detalle $mensajeError }
         return 'Fallido'
     }
 }
@@ -281,6 +290,7 @@ function Set-JsonValor {
     }
 
     $etiqueta = '{0} : {1}' -f $Ruta, ($Clave -join '.')
+    $hashAntes = (Get-FileHash -LiteralPath $Ruta -Algorithm SHA256).Hash
     try {
         $raiz = Read-JsonArchivo -Ruta $Ruta
         $padre = Resolve-JsonPadre -Raiz $raiz -Clave $Clave
@@ -295,8 +305,8 @@ function Set-JsonValor {
     if ($padre) { $propiedad = $padre.PSObject.Properties[$hoja] }
 
     if ($propiedad) {
-        $a = ConvertTo-Json -InputObject $propiedad.Value -Compress -Depth 20
-        $b = ConvertTo-Json -InputObject $Valor -Compress -Depth 20
+        $a = ConvertTo-Json -InputObject $propiedad.Value -Compress -Depth 100
+        $b = ConvertTo-Json -InputObject $Valor -Compress -Depth 100
         if ($a -ceq $b) {
             Write-Log -Nivel DEBUG -Mensaje "JSON: $etiqueta ya tiene el valor deseado."
             return 'SinCambios'
@@ -305,7 +315,7 @@ function Set-JsonValor {
 
     # Texto del valor anterior para el log (se calcula ahora: $propiedad apunta al valor vivo y cambiará)
     $antesTexto = '(no existía)'
-    if ($propiedad) { $antesTexto = ConvertTo-Json -InputObject $propiedad.Value -Compress -Depth 20 }
+    if ($propiedad) { $antesTexto = ConvertTo-Json -InputObject $propiedad.Value -Compress -Depth 100 }
 
     # Intermedios que no existen y vamos a crear
     $intermedios = New-Object System.Collections.ArrayList
@@ -358,13 +368,18 @@ function Set-JsonValor {
         Write-JsonArchivo -Ruta $Ruta -Raiz $raiz
         Set-JournalEntradaEstado -Entrada $registro -Estado Aplicada
 
-        $despues = ConvertTo-Json -InputObject $Valor -Compress -Depth 20
+        $despues = ConvertTo-Json -InputObject $Valor -Compress -Depth 100
         Write-Log -Nivel OK -Mensaje "JSON: $etiqueta : $antesTexto -> $despues"
         return 'Cambiado'
     }
     catch {
-        Set-JournalEntradaEstado -Entrada $registro -Estado Fallida -Detalle $_.Exception.Message
-        Write-Log -Nivel ERROR -Mensaje "JSON: no se pudo cambiar $etiqueta : $($_.Exception.Message)"
+        $mensajeError = $_.Exception.Message
+        Write-Log -Nivel ERROR -Mensaje "JSON: no se pudo cambiar $etiqueta : $mensajeError"
+        # Si el archivo quedó como estaba, el cambio no debe quedar en el journal
+        $intacto = $false
+        try { $intacto = ((Get-FileHash -LiteralPath $Ruta -Algorithm SHA256).Hash -eq $hashAntes) } catch { }
+        if ($intacto) { Remove-JournalEntrada -Entrada $registro }
+        else { Set-JournalEntradaEstado -Entrada $registro -Estado Fallida -Detalle $mensajeError }
         return 'Fallido'
     }
 }

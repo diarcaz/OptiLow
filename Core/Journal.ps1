@@ -41,7 +41,7 @@ function Write-JournalJson {
         [Parameter(Mandatory)]$Objeto
     )
 
-    $json = ConvertTo-Json -InputObject $Objeto -Depth 20
+    $json = ConvertTo-Json -InputObject $Objeto -Depth 100
     $temporal = $Ruta + '.tmp'
     [System.IO.File]::WriteAllText($temporal, $json, (New-Object System.Text.UTF8Encoding($false)))
     if (Test-Path -LiteralPath $Ruta) {
@@ -144,6 +144,37 @@ function Set-JournalEntradaEstado {
     Save-Journal
 }
 
+function Remove-JournalEntrada {
+    <#
+    .SYNOPSIS
+        Quita del journal la última entrada cuando el cambio falló SIN modificar nada del sistema.
+    .DESCRIPTION
+        Un cambio que falla sin haber tocado nada no debe quedar en el journal (el deshacer intentaría
+        "restaurarlo"). Solo se puede quitar la última entrada de la sesión activa. Si el cambio pudo
+        quedar a medias, NO se usa: la entrada se marca Fallida y el deshacer la revierte.
+        Si la sesión se queda sin entradas, se borra su archivo.
+    #>
+    param(
+        [Parameter(Mandatory)]$Entrada
+    )
+
+    $s = $global:OptiLow.Journal
+    if ((-not $s) -or ($s.Datos.Entradas.Count -eq 0)) { return }
+    $ultima = $s.Datos.Entradas[$s.Datos.Entradas.Count - 1]
+    if (-not [object]::ReferenceEquals($ultima, $Entrada)) {
+        # No es la última (no debería pasar): se conserva como Fallida
+        Set-JournalEntradaEstado -Entrada $Entrada -Estado Fallida
+        return
+    }
+    $s.Datos.Entradas.RemoveAt($s.Datos.Entradas.Count - 1)
+    if ($s.Datos.Entradas.Count -eq 0) {
+        if (Test-Path -LiteralPath $s.Ruta) { Remove-Item -LiteralPath $s.Ruta -Force }
+    }
+    else {
+        Save-Journal
+    }
+}
+
 function Get-JournalSesiones {
     <#
     .SYNOPSIS
@@ -221,14 +252,23 @@ function Undo-JournalSesion {
         return [pscustomobject]@{ Estado = 'Restaurado'; Restauradas = 0; Fallidas = @() }
     }
 
-    Write-Log -Mensaje "Deshaciendo la sesión $($datos.Id) ($(@($datos.Entradas).Count) entradas)..."
     $entradas = @($datos.Entradas)
+    $yaRevertidas = @($entradas | Where-Object { $_.Restaurada -eq $true }).Count
+    if ($yaRevertidas -gt 0) {
+        Write-Log -Mensaje "Deshaciendo la sesión $($datos.Id): $($entradas.Count) entradas, de las cuales $yaRevertidas ya estaban revertidas (por ejemplo, el ajuste temporal de la frecuencia de puntos de restauración, que se revierte en el momento) y se omiten."
+    }
+    else {
+        Write-Log -Mensaje "Deshaciendo la sesión $($datos.Id) ($($entradas.Count) entradas)..."
+    }
     $fallidas = New-Object System.Collections.ArrayList
     $restauradas = 0
 
     for ($i = $entradas.Count - 1; $i -ge 0; $i--) {
         $entrada = $entradas[$i]
-        if ($entrada.Restaurada -eq $true) { continue }
+        if ($entrada.Restaurada -eq $true) {
+            Write-Log -Nivel DEBUG -Mensaje "Entrada $($entrada.Indice) ($($entrada.Descripcion)): ya revertida; se omite."
+            continue
+        }
         try {
             switch ($entrada.Tipo) {
                 'Registro'    { Restore-RegistroEntrada -Entrada $entrada }
@@ -271,7 +311,12 @@ function Undo-JournalSesion {
     if ($e.Journal -and ($e.Journal.Id -eq $datos.Id)) { $e.Journal = $null }
 
     if ($fallidas.Count -eq 0) {
-        Write-Log -Nivel OK -Mensaje "Sesión $($datos.Id) restaurada por completo ($restauradas entradas)."
+        if ($yaRevertidas -gt 0) {
+            Write-Log -Nivel OK -Mensaje "Sesión $($datos.Id) restaurada por completo: $restauradas entradas restauradas ahora y $yaRevertidas que ya estaban revertidas."
+        }
+        else {
+            Write-Log -Nivel OK -Mensaje "Sesión $($datos.Id) restaurada por completo ($restauradas entradas)."
+        }
     }
     else {
         Write-Log -Nivel WARN -Mensaje "Restauración PARCIAL de la sesión $($datos.Id): $restauradas restauradas, $($fallidas.Count) fallidas."

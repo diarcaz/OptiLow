@@ -134,10 +134,11 @@ function Set-ServicioInicio {
     if ($resultado.Codigo -ne 0) {
         $motivo = "sc.exe devolvió el código $($resultado.Codigo). $($resultado.Salida)"
         if ($resultado.Codigo -eq 5) {
-            $motivo = "Acceso denegado (el servicio está protegido por Windows). $($resultado.Salida)"
+            $motivo = "Acceso denegado (servicio protegido por Windows o faltan permisos). $($resultado.Salida)"
         }
-        Set-JournalEntradaEstado -Entrada $registro -Estado Fallida -Detalle $motivo
         Write-Log -Nivel ERROR -Mensaje "Servicio '$Nombre': no se pudo cambiar a $Inicio. $motivo"
+        # sc.exe falló sin modificar nada: el cambio no debe quedar en el journal
+        Remove-JournalEntrada -Entrada $registro
         return 'Fallido'
     }
 

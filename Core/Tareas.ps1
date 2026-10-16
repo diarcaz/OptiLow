@@ -79,8 +79,17 @@ function Disable-TareaProgramada {
         return 'Cambiado'
     }
     catch {
-        Set-JournalEntradaEstado -Entrada $registro -Estado Fallida -Detalle $_.Exception.Message
-        Write-Log -Nivel ERROR -Mensaje "Tarea '$etiqueta': no se pudo desactivar: $($_.Exception.Message)"
+        $mensajeError = $_.Exception.Message
+        Write-Log -Nivel ERROR -Mensaje "Tarea '$etiqueta': no se pudo desactivar: $mensajeError"
+        # Si la tarea sigue habilitada, no se tocó nada y el cambio no debe quedar en el journal
+        $sigueHabilitada = $false
+        try { $sigueHabilitada = (Get-TareaEstado -Ruta $estado.Ruta -Nombre $Nombre).Habilitada } catch { }
+        if ($sigueHabilitada) {
+            Remove-JournalEntrada -Entrada $registro
+        }
+        else {
+            Set-JournalEntradaEstado -Entrada $registro -Estado Fallida -Detalle $mensajeError
+        }
         return 'Fallido'
     }
 }

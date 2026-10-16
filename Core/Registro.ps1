@@ -276,8 +276,21 @@ function Set-RegistroValorInterno {
         return [pscustomobject]@{ Estado = 'Cambiado'; Entrada = $registro }
     }
     catch {
-        Set-JournalEntradaEstado -Entrada $registro -Estado Fallida -Detalle $_.Exception.Message
-        Write-Log -Nivel ERROR -Mensaje "Registro: no se pudo cambiar $etiqueta : $($_.Exception.Message)"
+        $mensajeError = $_.Exception.Message
+        Write-Log -Nivel ERROR -Mensaje "Registro: no se pudo cambiar $etiqueta : $mensajeError"
+
+        # Si el fallo no tocó nada, la entrada no debe quedar en el journal; si pudo quedar algo a medias
+        # (p. ej. se creó la clave pero no el valor), se conserva como Fallida para que el deshacer lo limpie.
+        $despuesFallo = Get-RegistroEstado -Ruta $info.RutaCompleta -Nombre $Nombre
+        $igual = ($despuesFallo.ClaveExiste -eq $actual.ClaveExiste) -and ($despuesFallo.ValorExiste -eq $actual.ValorExiste)
+        if ($igual -and $actual.ValorExiste) {
+            $igual = ($despuesFallo.Tipo -eq $actual.Tipo) -and (Test-RegistroDatoIgual -Tipo $actual.Tipo -A $despuesFallo.Dato -B $actual.Dato)
+        }
+        if ($igual) {
+            Remove-JournalEntrada -Entrada $registro
+            return [pscustomobject]@{ Estado = 'Fallido'; Entrada = $null }
+        }
+        Set-JournalEntradaEstado -Entrada $registro -Estado Fallida -Detalle $mensajeError
         return [pscustomobject]@{ Estado = 'Fallido'; Entrada = $registro }
     }
     finally { $base.Dispose() }

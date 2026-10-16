@@ -153,13 +153,39 @@ try {
     $o = [IO.File]::ReadAllText($j) | ConvertFrom-Json
     $o.a = 99
     Add-Member -InputObject $o -NotePropertyName extra -NotePropertyValue 'del usuario'
-    [IO.File]::WriteAllText($j, ($o | ConvertTo-Json -Depth 10), (New-Object Text.UTF8Encoding($false)))   # el "usuario" cambia otras cosas
+    [IO.File]::WriteAllText($j, ($o | ConvertTo-Json -Depth 100), (New-Object Text.UTF8Encoding($false)))   # el "usuario" cambia otras cosas
     [void](Undo-Actual)
     $o = [IO.File]::ReadAllText($j) | ConvertFrom-Json
     T 'Clave restaurada a true' ($o.enableHardwareAcceleration -eq $true)
     T 'Cambios posteriores del usuario conservados' ($o.a -eq 99 -and $o.extra -eq 'del usuario')
     T 'Objetos intermedios que creamos eliminados' (-not $o.PSObject.Properties['n1'])
 
+    Seccion 'JSON profundo: 5 niveles, arrays, nulos y caracteres especiales (se compara que quede idéntico salvo la clave cambiada)'
+    $jp = Join-Path $dirTmp 'profundo.json'
+    $textoOriginal = '{"nombre":"Prueba ñandú <&> ''q''","version":3,"activo":true,"nulo":null,"fecha":"2024-05-01T12:00:00Z","decimal":1.5,"grande":12345678901,"lista":[1,2,3],"vacia":[],"objVacio":{},"uno":["solo"],"nivel1":{"nivel2":{"nivel3":{"nivel4":{"nivel5":{"profundo":"valor","arr":[{"a":1,"b":[10,20,{"c":"x"}]},{"a":2}]}}}}},"matriz":[[1,2],[3,[4,5]]],"enableHardwareAcceleration":true}'
+    [IO.File]::WriteAllText($jp, $textoOriginal, (New-Object Text.UTF8Encoding($false)))
+    $canon = { param($texto) ConvertTo-Json -InputObject (ConvertFrom-Json -InputObject $texto) -Depth 100 -Compress }
+    $canonOriginal = & $canon $textoOriginal
+
+    [void](Start-JournalSesion -Nueva)
+    T 'Cambiar una clave de primer nivel' ((Set-JsonValor -Ruta $jp -Clave 'enableHardwareAcceleration' -Valor $false) -eq 'Cambiado')
+    $despues = [IO.File]::ReadAllText($jp)
+    $esperado = ConvertFrom-Json -InputObject $textoOriginal
+    $esperado.enableHardwareAcceleration = $false
+    T 'El resto del contenido quedó idéntico (solo cambió esa clave)' ((& $canon $despues) -ceq (ConvertTo-Json -InputObject $esperado -Depth 100 -Compress))
+    T 'No aparecen textos de objetos aplastados (System.Collections / @{)' (($despues -notmatch 'System\.Collections') -and ($despues -notmatch '@\{'))
+    $o = ConvertFrom-Json -InputObject $despues
+    T 'El valor del nivel 5 y el array anidado siguen ahí' (($o.nivel1.nivel2.nivel3.nivel4.nivel5.arr[0].b[2].c -eq 'x') -and ($o.matriz[1][1][1] -eq 5))
+    T 'Array de un solo elemento sigue siendo array' (($o.uno -is [array]) -and ($o.uno.Count -eq 1))
+    T 'Array y objeto vacíos se conservan' (($o.vacia -is [array]) -and ($o.vacia.Count -eq 0) -and ($o.objVacio -is [pscustomobject]))
+    T 'Los caracteres especiales no se alteran' ($o.nombre -ceq "Prueba ñandú <&> 'q'")
+    T 'Nulo y número grande se conservan' (($null -eq $o.nulo) -and ($o.grande -eq 12345678901))
+
+    T 'Cambiar una clave del nivel 5' ((Set-JsonValor -Ruta $jp -Clave 'nivel1', 'nivel2', 'nivel3', 'nivel4', 'nivel5', 'profundo' -Valor 'nuevo') -eq 'Cambiado')
+    T 'Reemplazar un objeto entero (se guarda en el journal con -Depth 100)' ((Set-JsonValor -Ruta $jp -Clave 'matriz' -Valor 'plano') -eq 'Cambiado')
+    $r = Undo-Actual
+    T 'Deshacer completo' ($r.Estado -eq 'Restaurado')
+    T 'Tras deshacer, el JSON es idéntico al original' ((& $canon ([IO.File]::ReadAllText($jp))) -ceq $canonOriginal)
     Seccion '6. Archivos: copia de respaldo, hash y deshacer'
     $f = Join-Path $dirTmp 'a.txt'; Set-Content -Path $f -Value 'original' -Encoding UTF8
     $f2 = Join-Path $dirTmp 'nuevo.txt'
@@ -260,9 +286,12 @@ try {
         $antesFrec = Get-RegistroEstado -Ruta 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore' -Nombre 'SystemRestorePointCreationFrequency'
         [void](Start-JournalSesion -Nueva)
         $p1 = New-PuntoRestauracion -Descripcion 'OptiLow prueba 1'
-        Info "Punto 1: Creado=$($p1.Creado) Motivo=$($p1.Motivo) $($p1.Detalle)"
+        Info "Punto 1: Creado=$($p1.Creado) Metodo=$($p1.Metodo) Motivo=$($p1.Motivo) $($p1.Detalle)"
         $p2 = New-PuntoRestauracion -Descripcion 'OptiLow prueba 2'
-        Info "Punto 2 (seguido, sin esperar 24 h): Creado=$($p2.Creado) Motivo=$($p2.Motivo) $($p2.Detalle)"
+        Info "Punto 2 (seguido, sin esperar 24 h): Creado=$($p2.Creado) Metodo=$($p2.Metodo) Motivo=$($p2.Motivo) $($p2.Detalle)"
+        if ((-not $p1.Creado) -and ($p1.Motivo -eq 'YaExisteReciente')) {
+            Info "Windows omitió el punto; el motivo trae el punto reciente: #$($p1.PuntoReciente.Secuencia) '$($p1.PuntoReciente.Descripcion)' $($p1.PuntoReciente.Fecha)"
+        }
         T 'Ambos puntos se crearon (la frecuencia se ajustó a 0)' ($p1.Creado -and $p2.Creado)
         $despFrec = Get-RegistroEstado -Ruta 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore' -Nombre 'SystemRestorePointCreationFrequency'
         T 'SystemRestorePointCreationFrequency quedó como estaba' (($antesFrec.ValorExiste -eq $despFrec.ValorExiste) -and ((-not $antesFrec.ValorExiste) -or ($antesFrec.Dato -eq $despFrec.Dato)))

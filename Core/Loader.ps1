@@ -41,7 +41,8 @@ $global:OptiLowFuncionesCore = @(
     'Get-ServicioEstado', 'Set-ServicioInicio', 'Restore-ServicioEntrada'
     'Get-TareaEstado', 'Disable-TareaProgramada', 'Restore-TareaEntrada'
     'Get-PlanesEnergia', 'Get-PlanEnergiaActivo', 'Set-PlanEnergia', 'Restore-PlanEnergiaEntrada'
-    'Get-EstadoProteccionSistema', 'New-PuntoRestauracion', 'Enable-ProteccionSistema'
+    'Remove-JournalEntrada'
+    'Get-EstadoProteccionSistema', 'Get-PuntosRestauracion', 'New-PuntoRestauracion', 'Enable-ProteccionSistema'
 )
 
 function global:Import-OptiLowArchivo {
