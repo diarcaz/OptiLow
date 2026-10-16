@@ -45,14 +45,53 @@ $tareas = @(
     @('\Microsoft\Windows\DiskDiagnostic\', 'Microsoft-Windows-DiskDiagnosticDataCollector')
 )
 
+function Add-VolcadoClave {
+    # Vuelca TODOS los valores (nombre, tipo y dato completo) de una clave y de sus subclaves, ordenados.
+    param($Clave, [string]$Ruta, $Lineas)
+    foreach ($n in @($Clave.GetValueNames() | Sort-Object)) {
+        $tipo = $Clave.GetValueKind($n)
+        $v = $Clave.GetValue($n, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        if ($v -is [byte[]]) { $repr = 'bytes:' + [Convert]::ToBase64String($v) }
+        elseif ($v -is [string[]]) { $repr = 'multi:' + ($v -join '|') }
+        else { $repr = [string]$v }
+        [void]$Lineas.Add("registro $Ruta | $n ($tipo) = $repr")
+    }
+    foreach ($sub in @($Clave.GetSubKeyNames() | Sort-Object)) {
+        $k = $Clave.OpenSubKey($sub)
+        if ($k) { try { Add-VolcadoClave -Clave $k -Ruta "$Ruta\$sub" -Lineas $Lineas } finally { $k.Dispose() } }
+    }
+}
+
+function Test-IgualInstantanea {
+    # Compara dos instantáneas y, si difieren, imprime las líneas que cambian (qué propiedad, antes y después)
+    param([string]$Esperado, [string]$Actual, [string]$Nombre)
+    if ($Esperado -ceq $Actual) { T $Nombre $true; return }
+    T $Nombre $false
+    $dif = Compare-Object -ReferenceObject ($Esperado -split "`n") -DifferenceObject ($Actual -split "`n") -CaseSensitive
+    foreach ($d in $dif) {
+        $lado = 'DESPUÉS'; if ($d.SideIndicator -eq '<=') { $lado = 'ANTES  ' }
+        $txt = [string]$d.InputObject
+        if ($txt.Length -gt 230) { $txt = $txt.Substring(0, 230) + '...' }
+        Write-Host "         $lado : $txt" -ForegroundColor Yellow
+    }
+}
+
 function Get-Instantanea {
-    # Configuración cruda de todo lo que tocan los tres tweaks (para comparar antes y después)
+    # Configuración cruda de todo lo que tocan los tres tweaks (para comparar antes y después).
+    # NO incluye el estado en ejecución de los servicios (Running/Stopped): los tweaks no lo cambian ni lo restauran.
     $partes = New-Object System.Collections.ArrayList
     $v = Get-RegistroEstado -Ruta 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Nombre 'EnableTransparency'
     [void]$partes.Add("transparencia: clave=$($v.ClaveExiste) valor=$($v.ValorExiste) tipo=$($v.Tipo) dato=$($v.Dato)")
     foreach ($n in 'DiagTrack', 'dmwappushservice') {
         $s = Get-ServicioEstado -Nombre $n
-        [void]$partes.Add("servicio ${n}: existe=$($s.Existe) start=$($s.Start) retrasado=$($s.Delayed)")
+        [void]$partes.Add("servicio ${n}: existe=$($s.Existe) start=$($s.Start) retrasado=$(if ($null -eq $s.Delayed) { '(no existe el valor)' } else { $s.Delayed })")
+        # Volcado completo de la clave del servicio (valores y subclaves: TriggerInfo, Security, Parameters...)
+        $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry64')
+        try {
+            $k = $base.OpenSubKey("SYSTEM\CurrentControlSet\Services\$n")
+            if ($k) { try { Add-VolcadoClave -Clave $k -Ruta "Services\$n" -Lineas $partes } finally { $k.Dispose() } }
+        }
+        finally { $base.Dispose() }
     }
     foreach ($t in $tareas) {
         $e = Get-TareaEstado -Ruta $t[0] -Nombre $t[1]
@@ -64,6 +103,8 @@ function Get-Instantanea {
 function Get-NumSesiones { return @(Get-JournalSesiones).Count }
 
 $original = Get-Instantanea
+function Show-EstadoEjecucion { param([string]$Cuando) foreach ($n in 'DiagTrack', 'dmwappushservice') { $sv = Get-Service -Name $n -ErrorAction SilentlyContinue; if ($sv) { Info ("$Cuando - $n en ejecución: $($sv.Status) (solo informativo: el tweak no lo cambia ni lo restaura)") } } }
+Show-EstadoEjecucion -Cuando 'Al empezar'
 
 Seccion '1. Registro de optimizaciones'
 T 'Se cargaron los dos archivos de Tweaks/ sin errores' ($extras.Cargados -eq 2 -and $extras.Fallidos -eq 0)
@@ -103,7 +144,7 @@ foreach ($id in 'efectos-transparencia-off', 'telemetria-servicios-off', 'teleme
         T 'Deshacer termina con código 0' ($c -eq 0)
     }
     T 'Comprobar vuelve al estado previo' ((Get-TweakEstado -Id $id).Estado -eq $estadoPrevio)
-    T 'La configuración quedó exactamente como estaba' ((Get-Instantanea) -ceq $antes)
+    Test-IgualInstantanea -Esperado $antes -Actual (Get-Instantanea) -Nombre 'La configuración quedó exactamente como estaba'
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -118,9 +159,10 @@ T 'Una sola sesión nueva' ((Get-NumSesiones) -eq ($n0 + 1))
 $sesion = Get-JournalSesiones | Select-Object -First 1
 T 'La sesión lista los tres tweaks' (@($sesion.Tweaks).Count -ge 2)
 Show-ResumenConsola -Lote $lote
+Show-EstadoEjecucion -Cuando 'Tras aplicar'
 $c = Codigo (Invoke-DeshacerConsola -SinPreguntar)
 T 'Deshacer la sesión: código 0' ($c -eq 0)
-T 'Todo quedó como al principio' ((Get-Instantanea) -ceq $original)
+Test-IgualInstantanea -Esperado $original -Actual (Get-Instantanea) -Nombre 'Todo quedó como al principio'
 
 # ---------------------------------------------------------------------------------------------
 Seccion '4. OptiLow.ps1 como proceso hijo (parámetros y códigos de salida)'
@@ -148,7 +190,7 @@ T '-Aplicar con varios Ids separados por comas, sin preguntar: código 0' ($h.Co
 T 'Quedó aplicado' ((Get-TweakEstado -Id 'efectos-transparencia-off').Estado -eq 'Aplicado')
 $h = Invoke-Hijo @('-Deshacer', '-SinPreguntar')
 T '-Deshacer sin Id: deshace la última sesión (código 0)' ($h.Codigo -eq 0)
-T 'Todo quedó como al principio' ((Get-Instantanea) -ceq $original)
+Test-IgualInstantanea -Esperado $original -Actual (Get-Instantanea) -Nombre 'Todo quedó como al principio'
 
 # ---------------------------------------------------------------------------------------------
 Seccion '5. Con punto de restauración real (opcional)'
@@ -159,7 +201,7 @@ if ((Read-Host 'Escribe SI para probar -Aplicar con punto de restauración real 
     T 'El resultado es 0 o 2 (nunca aplica sin punto con -SinPreguntar)' (@(0, 2) -contains $h.Codigo)
     if ($h.Codigo -eq 2) { T 'Si se canceló, no se aplicó nada' ((Get-TweakEstado -Id 'efectos-transparencia-off').Estado -eq 'Pendiente') }
     else { [void](Invoke-Hijo @('-Deshacer', '-SinPreguntar')) }
-    T 'Todo quedó como al principio' ((Get-Instantanea) -ceq $original)
+    Test-IgualInstantanea -Esperado $original -Actual (Get-Instantanea) -Nombre 'Todo quedó como al principio'
 }
 else { Info 'Omitido.' }
 

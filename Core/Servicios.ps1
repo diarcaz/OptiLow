@@ -189,5 +189,24 @@ function Restore-ServicioEntrada {
     if ($despues.Inicio -ne $inicio) {
         throw "El servicio '$nombre' quedó en '$($despues.Inicio)' en vez de '$inicio' (Start=$($despues.Start), DelayedAutostart=$($despues.Delayed))."
     }
+
+    # Si el valor DelayedAutostart no existía y ahora existe con 0 (sc.exe lo deja escrito al cambiar el tipo
+    # de inicio), se elimina para dejar la clave exactamente como estaba. Es equivalente a "no retrasado".
+    if (($null -eq $Entrada.DelayedOriginal) -and ($null -ne $despues.Delayed) -and ([int]$despues.Delayed -eq 0)) {
+        try {
+            $base = Open-RegistroBase -Hive ([Microsoft.Win32.RegistryHive]::LocalMachine)
+            try {
+                $k = $base.OpenSubKey("SYSTEM\CurrentControlSet\Services\$nombre", $true)
+                if ($k) {
+                    try { $k.DeleteValue('DelayedAutostart', $false) } finally { $k.Dispose() }
+                    Write-Log -Nivel DEBUG -Mensaje "Servicio '$nombre': se eliminó el valor DelayedAutostart=0 que no existía originalmente."
+                }
+            }
+            finally { $base.Dispose() }
+        }
+        catch {
+            Write-Log -Nivel WARN -Mensaje "Servicio '$nombre': no se pudo eliminar DelayedAutostart=0 (equivale a no retrasado; diferencia solo cosmética): $($_.Exception.Message)"
+        }
+    }
     Write-Log -Nivel OK -Mensaje "Restaurado: servicio '$nombre' -> $inicio"
 }
