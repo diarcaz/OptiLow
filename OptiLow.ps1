@@ -4,10 +4,18 @@
 .DESCRIPTION
     Punto de entrada. Verifica administrador (relanza con UAC si hace falta), carga el
     proyecto con el cargador único e inicializa el log.
-    Fase 3: modo consola con motor de optimizaciones (la interfaz gráfica llega en la fase 5).
-    Nada se aplica sin una acción explícita (-Aplicar o -Deshacer). El diagnóstico solo lee.
+    Sin ninguna acción de consola (y sin -Consola) abre la interfaz gráfica (fase 5).
+    Nada se aplica sin una acción explícita del usuario (botón Aplicar, -Aplicar o -Deshacer). El diagnóstico solo lee.
 .PARAMETER Consola
-    Modo sin interfaz (la interfaz gráfica llega en la fase 5).
+    Modo consola: no abre la interfaz.
+.PARAMETER MostrarConsola
+    En modo interfaz, no oculta la consola de PowerShell (útil para depurar).
+.PARAMETER RenderizadoSoftware
+    En modo interfaz, fuerza el renderizado por software (drivers de video rotos). Tiene prioridad sobre la
+    preferencia guardada. Lo usa «Iniciar (modo seguro).cmd».
+.PARAMETER Demo
+    En modo interfaz, muestra en la pestaña Diagnóstico el selector de datos simulados (Bajo, Medio, Alto).
+    Es solo para ver: con datos simulados no se puede aplicar ni deshacer nada.
 .PARAMETER Listar
     Lista las optimizaciones registradas con su estado actual (solo lee).
 .PARAMETER ListarSesiones
@@ -45,6 +53,9 @@
 [CmdletBinding()]
 param(
     [switch]$Consola,
+    [switch]$MostrarConsola,
+    [switch]$RenderizadoSoftware,
+    [switch]$Demo,
     [switch]$Listar,
     [switch]$ListarSesiones,
     [switch]$Diagnostico,
@@ -60,6 +71,69 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $RaizProyecto = $PSScriptRoot
+
+function global:Show-ErrorSinWpf {
+    <#
+    .SYNOPSIS
+        Muestra un error de arranque SIN depender de WPF (la consola va oculta en modo interfaz) y lo guarda.
+    .DESCRIPTION
+        Cadena: log (si ya existe) y %TEMP%\OptiLow-error.log -> WScript.Shell.Popup -> MessageBox de Windows
+        Forms (si Windows Script Host está bloqueado por directiva) -> msg.exe -> solo el archivo.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Mensaje,
+        [string]$Titulo = 'OptiLow - error al iniciar'
+    )
+
+    try { Write-Log -Nivel ERROR -Mensaje $Mensaje } catch { }
+    $archivo = Join-Path $env:TEMP 'OptiLow-error.log'
+    try {
+        [System.IO.File]::AppendAllText($archivo, ('[{0:yyyy-MM-dd HH:mm:ss}] {1}' -f (Get-Date), $Mensaje) + "`r`n", (New-Object System.Text.UTF8Encoding($true)))
+    }
+    catch { }
+    Write-Host "[ERROR] $Mensaje" -ForegroundColor Red
+
+    $texto = $Mensaje + "`n`nSe guardó en: $archivo"
+    try {
+        $wsh = New-Object -ComObject WScript.Shell
+        [void]$wsh.Popup($texto, 0, $Titulo, 16)
+        return
+    }
+    catch { }
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        [void][System.Windows.Forms.MessageBox]::Show($texto, $Titulo, 'OK', 'Error')
+        return
+    }
+    catch { }
+    try { & "$env:windir\System32\msg.exe" '*' '/TIME:120' $texto } catch { }
+}
+
+function ConvertTo-ArgumentosReenvio {
+    # Auxiliar: reconstruye los parámetros recibidos para relanzar el script (menos los indicados).
+    param(
+        [Parameter(Mandatory)]$Parametros,
+        [string[]]$Excluir = @()
+    )
+
+    $argumentos = @()
+    foreach ($par in $Parametros.GetEnumerator()) {
+        if ($Excluir -contains $par.Key) { continue }
+        $valor = $par.Value
+        if ($valor -is [System.Management.Automation.SwitchParameter]) {
+            if ($valor.IsPresent) { $argumentos += "-$($par.Key)" }
+        }
+        elseif ($valor -is [array]) {
+            $argumentos += "-$($par.Key)"
+            $argumentos += (($valor | ForEach-Object { [string]$_ }) -join ',')
+        }
+        else {
+            $argumentos += "-$($par.Key)"
+            $argumentos += [string]$valor
+        }
+    }
+    return $argumentos
+}
 
 function Wait-CierreVentana {
     # En una ventana elevada nueva, evita que se cierre antes de leer el resultado.
@@ -77,15 +151,25 @@ if ($PSBoundParameters.ContainsKey('Aplicar')) {
 $pedirRecomendados = @($idsAplicar | Where-Object { $_ -ieq 'recomendados' }).Count -gt 0
 $idsAplicar = @($idsAplicar | Where-Object { $_ -ine 'recomendados' })
 $hayAccion = $Listar -or $ListarSesiones -or $Diagnostico -or $Deshacer -or $PSBoundParameters.ContainsKey('Aplicar')
+# Sin acción de consola y sin -Consola: se abre la interfaz
+$modoInterfaz = (-not $hayAccion) -and (-not $Consola)
 
 # --- 1. Administrador (antes de tocar nada en disco) ---
-# Se carga solo lo mínimo de Core para comprobarlo; el resto se carga ya elevado.
+# Modo consola: se carga todo Core/ (como siempre). Modo interfaz: solo lo mínimo para comprobar el administrador y
+# relanzar (Paths, Logging, Admin); el resto de Core/ lo carga la propia interfaz, ya con la ventana en pantalla.
 try {
     . (Join-Path $RaizProyecto 'Core\Loader.ps1')
-    Import-OptiLowCore -Raiz $RaizProyecto
+    if ($modoInterfaz) {
+        foreach ($nombreCore in @('Paths.ps1', 'Logging.ps1', 'Admin.ps1')) {
+            Import-OptiLowArchivo -Ruta (Join-Path (Join-Path $RaizProyecto 'Core') $nombreCore)
+        }
+    }
+    else {
+        Import-OptiLowCore -Raiz $RaizProyecto
+    }
 }
 catch {
-    Write-Host "[ERROR] $($_.Exception.Message)" -ForegroundColor Red
+    if ($modoInterfaz) { Show-ErrorSinWpf -Mensaje $_.Exception.Message } else { Write-Host "[ERROR] $($_.Exception.Message)" -ForegroundColor Red }
     Wait-CierreVentana
     exit 1
 }
@@ -113,26 +197,45 @@ if (-not $esAdmin -and -not $SinElevar) {
     Write-Host 'Se necesitan permisos de administrador. Solicitando elevación (UAC)...' -ForegroundColor Cyan
 
     # Se reenvían todos los parámetros recibidos (menos los de control de la elevación)
-    $argumentos = @('-Elevado')
-    foreach ($par in $PSBoundParameters.GetEnumerator()) {
-        if (@('SinElevar', 'Elevado') -contains $par.Key) { continue }
-        $valor = $par.Value
-        if ($valor -is [System.Management.Automation.SwitchParameter]) {
-            if ($valor.IsPresent) { $argumentos += "-$($par.Key)" }
-        }
-        elseif ($valor -is [array]) {
-            $argumentos += "-$($par.Key)"
-            $argumentos += (($valor | ForEach-Object { [string]$_ }) -join ',')
-        }
-        else {
-            $argumentos += "-$($par.Key)"
-            $argumentos += [string]$valor
-        }
-    }
-    if (Invoke-RelanzarComoAdministrador -RutaScript $PSCommandPath -Argumentos $argumentos) {
+    $argumentos = @('-Elevado') + @(ConvertTo-ArgumentosReenvio -Parametros $PSBoundParameters -Excluir @('SinElevar', 'Elevado'))
+    # En modo interfaz el proceso elevado lleva la consola oculta (salvo -MostrarConsola)
+    if (Invoke-RelanzarComoAdministrador -RutaScript $PSCommandPath -Argumentos $argumentos -Oculto:($modoInterfaz -and -not $MostrarConsola)) {
         exit 0
     }
+    if ($modoInterfaz) {
+        # La consola puede estar oculta: el aviso tiene que verse sin depender de ella
+        Show-ErrorSinWpf -Titulo 'OptiLow' -Mensaje 'OptiLow necesita permisos de administrador y no se concedieron (se canceló la ventana de Windows o falló). Para mirar sin aplicar nada, abre OptiLow.ps1 con -SinElevar.'
+    }
     exit 1
+}
+
+# --- 1b. Modo interfaz ---
+if ($modoInterfaz) {
+    # WPF exige un hilo STA: si el proceso no lo es, se relanza con -STA
+    if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
+        $exeSta = Join-Path $PSHOME $(if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh.exe' } else { 'powershell.exe' })
+        $partesSta = @('-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath) + @(ConvertTo-ArgumentosReenvio -Parametros $PSBoundParameters)
+        $cadenaSta = ($partesSta | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
+        $procSta = Start-Process -FilePath $exeSta -ArgumentList $cadenaSta -Wait -PassThru -NoNewWindow
+        exit $procSta.ExitCode
+    }
+    $codigoUi = 1
+    try {
+        foreach ($nombreUi in @('Interfaz.ps1', 'Trabajos.ps1', 'Inicio.ps1')) {
+            Import-OptiLowArchivo -Ruta (Join-Path (Join-Path $RaizProyecto 'UI') $nombreUi)
+        }
+        $codigoUi = @(Start-OptiLowInterfaz -Raiz $RaizProyecto -Opciones @{
+            Demo                = [bool]$Demo
+            SinElevar           = [bool]$SinElevar
+            RenderizadoSoftware = [bool]$RenderizadoSoftware
+            MostrarConsola      = [bool]$MostrarConsola
+        })
+    }
+    catch {
+        Show-ErrorSinWpf -Mensaje "No se pudo iniciar la interfaz: $($_.Exception.Message)"
+    }
+    # La función devuelve un solo número; se toma el último valor por si algo más llegara a la salida
+    exit ([int]@($codigoUi)[-1])
 }
 
 # --- 2. Rutas y log ---
@@ -200,7 +303,7 @@ elseif ($PSBoundParameters.ContainsKey('Aplicar')) {
 }
 
 if ((-not $hayAccion) -and (-not $Consola)) {
-    Write-Log -Nivel INFO -Mensaje 'La interfaz gráfica aún no existe (fase 5). Se trabaja en modo consola: usa -Diagnostico, -Listar, -Aplicar, -Deshacer o -ListarSesiones.'
+    Write-Log -Nivel INFO -Mensaje 'Modo consola (-Consola) sin ninguna acción: usa -Diagnostico, -Listar, -Aplicar, -Deshacer o -ListarSesiones (sin -Consola se abre la interfaz).'
 }
 
 Wait-CierreVentana

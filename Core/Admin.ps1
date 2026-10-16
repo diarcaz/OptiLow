@@ -23,7 +23,8 @@ function Invoke-RelanzarComoAdministrador {
     #>
     param(
         [Parameter(Mandatory)][string]$RutaScript,
-        [string[]]$Argumentos = @()
+        [string[]]$Argumentos = @(),
+        [switch]$Oculto
     )
 
     if ($PSVersionTable.PSEdition -eq 'Core') {
@@ -48,6 +49,8 @@ function Invoke-RelanzarComoAdministrador {
         $info.Arguments        = $cadena
         $info.UseShellExecute  = $true
         $info.Verb             = 'runas'
+        # Modo interfaz: la consola del proceso elevado va oculta (-MostrarConsola la deja visible)
+        if ($Oculto) { $info.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden }
         $info.WorkingDirectory = Split-Path -Parent $RutaScript
         [void][System.Diagnostics.Process]::Start($info)
         return $true

@@ -17,3 +17,8 @@ No se implementan hasta que se aprueben.
 - (Fase 4) Nivel 3 de GPU sin soporte (Intel 6.ª-10.ª generación) está comentado en `Config/unsupported-gpu-patterns.txt`; descomentarlo si se quiere verlo como Info.
 - (Fase 4) Ejecutar las consultas del diagnóstico en paralelo (runspaces) si en equipos con HDD y 4 GB tarda demasiado; hoy es secuencial con límite de tiempo por consulta.
 - (Fase 4) Leer la temperatura de la CPU/SSD y los eventos de disco (SMART) si la salud `Unknown` resulta frecuente en la VM o en equipos reales.
+- (Fase 5) Medir el arranque en un equipo con HDD frío (y 4 GB); si "Abierto en X s" fuera alto, valorar de nuevo una pantalla de carga, ahora con datos. Con el disco en caché la ventana aparece a los ~0,7 s y la lista a los ~1,5 s.
+- (Fase 5) Detectar una ventana negra o con basura sin excepción (hoy solo la resuelve `Iniciar (modo seguro).cmd`).
+- (Fase 5) Buscador o filtro por riesgo en la lista de optimizaciones cuando haya muchos tweaks (fase 6), y mostrar la descripción dentro de la fila.
+- (Fase 5) Poder cancelar un trabajo largo (hoy no se cancela a la mitad; cerrar la ventana avisa de que lo aplicado queda en el journal).
+- (Fase 5) `Core/` se lee dos veces (hilo de la interfaz y runspace de trabajo); si en un HDD se nota, cargar el runspace solo cuando haga falta o compartir la carga.

@@ -98,11 +98,42 @@ function global:Import-OptiLowCore {
         }
     }
 
+    Test-OptiLowFuncionesCore
+}
+
+function global:Test-OptiLowFuncionesCore {
+    <#
+    .SYNOPSIS
+        Verifica que existan todas las funciones de Core/ (fatal si falta alguna). La interfaz la llama
+        cuando carga Core/ archivo por archivo.
+    #>
     foreach ($funcion in $global:OptiLowFuncionesCore) {
         if (-not (Test-Path -LiteralPath ('Function:\global:' + $funcion))) {
             throw "Tras cargar Core/ no existe la función '$funcion'. El programa no puede continuar."
         }
     }
+}
+
+function global:Get-OptiLowArchivosExtras {
+    <#
+    .SYNOPSIS
+        Lista, en el orden de carga, los archivos de Modules/ y Tweaks/ (sin las plantillas que empiezan con "_").
+        La interfaz los carga uno a uno para poder pintar entre archivo y archivo.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Raiz
+    )
+
+    $lista = New-Object System.Collections.ArrayList
+    foreach ($carpeta in @('Modules', 'Tweaks')) {
+        $dir = Join-Path $Raiz $carpeta
+        if (-not (Test-Path -LiteralPath $dir)) { continue }
+        foreach ($archivo in @(Get-ChildItem -Path $dir -Filter '*.ps1' -File | Sort-Object Name)) {
+            if ($archivo.Name.StartsWith('_')) { continue }
+            [void]$lista.Add($archivo)
+        }
+    }
+    return @($lista)
 }
 
 function global:Import-OptiLowExtras {
@@ -126,22 +157,16 @@ function global:Import-OptiLowExtras {
 
     $cargados = 0
     $fallidos = 0
-    foreach ($carpeta in @('Modules', 'Tweaks')) {
-        $dir = Join-Path $Raiz $carpeta
-        if (-not (Test-Path -LiteralPath $dir)) { continue }
-
-        $archivos = Get-ChildItem -Path $dir -Filter '*.ps1' -File | Sort-Object Name
-        foreach ($archivo in $archivos) {
-            if ($archivo.Name.StartsWith('_')) { continue }
-            try {
-                Import-OptiLowArchivo -Ruta $archivo.FullName
-                $cargados++
-                Write-Log -Nivel DEBUG -Mensaje "Cargado $carpeta\$($archivo.Name)"
-            }
-            catch {
-                $fallidos++
-                Write-Log -Nivel ERROR -Mensaje "No se pudo cargar $carpeta\$($archivo.Name): $($_.Exception.Message)"
-            }
+    foreach ($archivo in @(Get-OptiLowArchivosExtras -Raiz $Raiz)) {
+        $carpeta = $archivo.Directory.Name
+        try {
+            Import-OptiLowArchivo -Ruta $archivo.FullName
+            $cargados++
+            Write-Log -Nivel DEBUG -Mensaje "Cargado $carpeta\$($archivo.Name)"
+        }
+        catch {
+            $fallidos++
+            Write-Log -Nivel ERROR -Mensaje "No se pudo cargar $carpeta\$($archivo.Name): $($_.Exception.Message)"
         }
     }
 

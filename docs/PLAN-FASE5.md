@@ -1,6 +1,9 @@
 # Plan de la fase 5: interfaz WPF/XAML
 
-**Estado: plan APROBADO por el usuario, con sus respuestas y ajustes ya incorporados. No se ha escrito código de la fase 5.**
+**Estado: plan APROBADO por el usuario y fase 5 ESCRITA (probada con `Pruebas/Probar-Fase5.ps1`; falta la VM).** Cambios respecto al plan original, decididos al implementar:
+- **Pantalla de "Cargando…":** se aprobó la de Windows Forms en otro hilo con dos condiciones (no impedir el arranque, cerrarse siempre) y con la instrucción de medir y quedarse con lo simple si la diferencia era insignificante. Medido (mismo equipo, disco en caché, ms desde el inicio del proceso, dos pasadas): script en marcha ~230; WPF cargado ~245; formulario WinForms en otro hilo visible ~320-345 (en el mismo hilo ~300-475). O sea, no gana nada (cargar WPF cuesta ~15-90 ms) y además saldría borroso con escala del 125-150 % porque `powershell.exe` no declara DPI hasta la primera ventana WPF. **Se quedó la opción simple:** la propia ventana principal con un panel "Cargando…" y carga por pasos. Sección 4 y 16 abajo.
+- Datos (V) verificados: ver la sección 16.
+- Todo lo demás se implementó como está descrito (el selector de `-Demo` usa radios, no un ComboBox).
 Reglas generales en `CLAUDE.md` (sección Interfaz); este documento manda sobre ellas en lo que detalla.
 Antes de escribir código: confirmar con el usuario que se empieza, y verificar en documentación oficial los datos técnicos marcados con (V) e informar del resultado.
 
@@ -164,3 +167,10 @@ Comprueba, abriendo la ventana en el propio proceso y manejándola con el dispat
 - Comportamiento de DPI de WPF dentro de `powershell.exe` (escala del sistema, nitidez).
 - Disponibilidad y límites de `WScript.Shell.Popup` y alternativas si WSH está bloqueado.
 - Crear un formulario de Windows Forms en otro hilo STA y cerrarlo desde el hilo principal de forma segura.
+
+## 16. Resultado de la verificación de los datos (V) y de la medición (hecha al empezar la fase)
+- **`RenderOptions.ProcessRenderMode`** (Microsoft Learn): `SoftwareOnly` fuerza el renderizado por software en el proceso; es una **preferencia** y "otras partes del sistema pueden forzar software igualmente"; prioridad: clave de registro `DisableHWAcceleration` > `ProcessRenderMode` > `RenderMode` de cada ventana. La documentación no dice que deba fijarse antes de la primera ventana: se hace así por prudencia. Se fija y se lee de vuelta sin problema.
+- **`RenderCapability.Tier`**: palabra alta del valor (`Tier -shr 16`); 0 = sin aceleración o DirectX < 9, 1 y 2 = con aceleración (2 pide más VRAM y sombreadores). **Medido: con `SoftwareOnly` sigue devolviendo 2**; informa de la capacidad, no del modo en uso. La barra de estado muestra los dos datos por separado.
+- **`WScript.Shell.Popup`**: `Popup(texto, segundos, título, tipo)`; `tipo` como `MessageBox` (16 = error, 48 = aviso); devuelve el botón pulsado o -1 si se agotó el tiempo. Funciona desde 5.1 en este equipo. Cadena de respaldo implementada: `MessageBox` de Windows Forms -> `msg.exe` -> solo archivo.
+- **DPI dentro de `powershell.exe`**: `IsProcessDPIAware` es False al arrancar y pasa a True al crear la primera ventana WPF (a 96 DPI no se puede ver la nitidez; queda para la VM con 125 y 150 %).
+- **Windows Forms en otro hilo STA**: se puede crear y cerrar de forma limpia desde el hilo principal con `BeginInvoke`, pero no se usa (ver el estado al principio).

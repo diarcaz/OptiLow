@@ -24,7 +24,7 @@ Idioma: toda la interfaz, los mensajes de log, los comentarios del código y la 
 6. Resto de tweaks, pestaña de programas de inicio y pestaña de respaldo/restauración.
 7. Documentación (`README.md` y `docs/ARQUITECTURA.md`).
 
-**Al empezar una sesión nueva, lee primero `docs/ESTADO.md` (qué fases están terminadas, resultados en la VM, pendientes y cómo se prueba todo) y el plan de la fase en curso (`docs/PLAN-FASE5.md`).** Espera mi orden antes de empezar a escribir código de una fase.
+**Al empezar una sesión nueva, lee primero `docs/ESTADO.md` (qué fases están terminadas, resultados en la VM, pendientes y cómo se prueba todo) y el plan de la fase en curso (la fase 5 está escrita y su plan, `docs/PLAN-FASE5.md`, queda como referencia de las decisiones; la fase 6 aún no tiene plan).** Espera mi orden antes de empezar a escribir código de una fase.
 
 ---
 
@@ -43,13 +43,14 @@ Idioma: toda la interfaz, los mensajes de log, los comentarios del código y la 
 ```
 Proyecto_Patata/       Raíz del repositorio
 ├── OptiLow.ps1        Punto de entrada: admin, STA, modo consola o interfaz
-├── Iniciar.cmd        Lanzador de doble clic (Windows PowerShell 5.1, ExecutionPolicy Bypass)
+├── Iniciar.cmd        Lanzador de doble clic (Windows PowerShell 5.1, ExecutionPolicy Bypass; consola oculta sin argumentos)
+├── Iniciar (modo seguro).cmd  Igual, con el renderizado por software forzado
 ├── CLAUDE.md          Instrucciones del proyecto
 ├── Core/              Utilidades sin interfaz (no tocan WPF)
 ├── Modules/           Diagnóstico de hardware, programas de inicio
 ├── Tweaks/            Un archivo por categoría de optimización
 ├── Config/            Listas editables sin tocar código
-├── UI/                MainWindow.xaml y su lógica
+├── UI/                MainWindow.xaml, Interfaz.ps1 (ventana, eventos, vistas), Trabajos.ps1 (runspace, cola, temporizador) e Inicio.ps1 (arranque)
 ├── Pruebas/           Scripts de autopruebas para VM (el cargador nunca los carga)
 └── docs/              Arquitectura, ideas, ESTADO.md (dónde vamos) y PLAN-FASEn.md (plan de la fase en curso)
 ```
@@ -156,12 +157,17 @@ Criterios ya fijados para tweaks futuros: aceleración por hardware (Discord, Ch
 - Los controles con nombre se obtienen a partir de sus `x:Name` del XAML; el estado compartido en una sola variable global, no en variables sueltas.
 - Opción para forzar renderizado por software (útil con drivers de video rotos), ya que WPF también usa la GPU.
 - **El plan aprobado de la fase 5 (decisiones y ajustes del usuario) está en `docs/PLAN-FASE5.md`; manda sobre estas viñetas generales.** Resumen: la consola de PowerShell va oculta en modo interfaz (`-MostrarConsola` para depurar) y los errores de arranque se muestran sin depender de WPF; pantalla de "Cargando…" lo antes posible; funciona en 1366x768 con escala del 100, 125 y 150 %; sin sombras, desenfoques ni animaciones; renderizado por software con preferencia guardada, reintento automático y lanzador "Iniciar (modo seguro).cmd"; el selector de perfil simulado solo existe con `-Demo` y es solo para ver; banner visible si el escritorio es de otro usuario; navegación completa con teclado; la pestaña de Respaldo es mínima (listar y deshacer la última) y Programas de inicio es un marcador hasta la fase 6.
+- **Fase 5 implementada** (decisiones en `docs/PLAN-FASE5.md`; lo siguiente es lo que quedó distinto o se midió):
+  - **Sin pantalla de "Cargando…" aparte.** Se midió el formulario de Windows Forms en otro hilo (aprobado con la condición de medirlo): aparece ~100 ms DESPUÉS de lo que tarda en cargar WPF (15-90 ms con el disco en caché) y, al crearse antes que la primera ventana WPF, saldría borroso con escala del 125-150 % (`powershell.exe` no declara DPI hasta que WPF crea su primera ventana: `IsProcessDPIAware` pasa de False a True). Por eso la propia ventana principal aparece enseguida con un panel "Cargando…" (parte del XAML) y `Core/`, `Modules/` y `Tweaks/` se cargan archivo por archivo dejando pintar entre uno y otro (`Invoke-BombearUI`). No hay hilo ni formulario que cerrar. Los tiempos por etapa (desde el inicio del proceso) van al log y a la barra de estado ("Abierto en X,X s"); no se pudo medir un HDD frío.
+  - **Arranque en modo interfaz** (`OptiLow.ps1` sin acción de consola ni `-Consola`): solo se cargan `Paths`, `Logging` y `Admin` para comprobar el administrador y relanzar (la consola del proceso elevado va oculta con `ProcessWindowStyle.Hidden`, salvo `-MostrarConsola`); si el proceso no es STA se relanza con `-STA`; el resto de `Core/` lo carga `UI/Inicio.ps1` con la ventana ya abierta. Un error de arranque se muestra con `Show-ErrorSinWpf` (en `OptiLow.ps1`): log y `%TEMP%\OptiLow-error.log`, `WScript.Shell.Popup` (documentado: `Popup(texto, segundos, título, tipo)`, devuelve el botón pulsado o -1 si se agotó el tiempo), `MessageBox` de Windows Forms, `msg.exe`.
+  - **Renderizado por software:** `RenderOptions.ProcessRenderMode = SoftwareOnly` se fija antes de crear la primera ventana; la documentación dice que es una **preferencia** (el sistema puede forzar software igualmente) y que la clave de registro `DisableHWAcceleration` tiene prioridad. `RenderCapability.Tier` (palabra alta: 0 sin aceleración o DirectX < 9, 1 y 2 con aceleración) informa de la **capacidad del equipo y NO cambia con `SoftwareOnly`** (medido: sigue en 2); por eso la barra de estado muestra el modo y el nivel por separado. Prioridad: `-RenderizadoSoftware` > preferencia guardada (`%ProgramData%\OptiLow\ui.json`, UTF-8 sin BOM) > automático; si crear la ventana lanza una excepción se reintenta una vez en software. Una ventana negra sin excepción solo se resuelve con `Iniciar (modo seguro).cmd`.
+  - **Trabajos:** un runspace de larga vida (`UI/Trabajos.ps1`, textos de trabajo en `$global:OptiLowScriptsTrabajo`), `DispatcherTimer` de 200 ms, un trabajo a la vez, cola de log compartida; el estado de la interfaz está en `$global:OptiLowUI` y los controles en `$global:OptiLowUI.C` (de los `x:Name` del XAML, ignorando los de `<Window.Resources>`). Los diálogos son ventanas propias (`Show-DialogoOptiLow`, sustituible en pruebas); «Aplicar» encadena los trabajos `preparar` → (decisión del usuario sobre el punto de restauración) → `aplicar`, con las mismas decisiones que la consola.
 
 ### Modo consola
 
 `OptiLow.ps1` acepta parámetros para usarse sin interfaz: listar tweaks y su estado, mostrar diagnóstico, aplicar una lista de IDs (o "recomendados"), y omitir el punto de restauración. Sirve para pruebas y automatización.
 
-Parámetros actuales: `-Diagnostico`, `-PerfilSimulado Bajo|Medio|Alto` (solo con `-Diagnostico`), `-Listar`, `-ListarSesiones`, `-Aplicar <ids separados por comas y/o la palabra recomendados>`, `-Deshacer` (por defecto la última sesión no restaurada; con `-Sesion <Id>` otra), `-SinPuntoRestauracion`, `-SinPreguntar`, `-SinElevar`. Códigos de salida: 0 bien, 1 fallos o error, 2 cancelado.
+Parámetros actuales: `-Consola`, `-MostrarConsola`, `-RenderizadoSoftware`, `-Demo` (los tres últimos, del modo interfaz; ver arriba), `-Diagnostico`, `-PerfilSimulado Bajo|Medio|Alto` (solo con `-Diagnostico`), `-Listar`, `-ListarSesiones`, `-Aplicar <ids separados por comas y/o la palabra recomendados>`, `-Deshacer` (por defecto la última sesión no restaurada; con `-Sesion <Id>` otra), `-SinPuntoRestauracion`, `-SinPreguntar`, `-SinElevar`. Códigos de salida: 0 bien, 1 fallos o error, 2 cancelado.
 
 `-Aplicar recomendados` ejecuta el diagnóstico REAL, evalúa el bloque `Recomendar` de cada tweak con ese objeto, **muestra por qué** se recomienda o no cada uno, omite los ya aplicados o que no aplican, y sigue el flujo normal (confirmación, punto de restauración, una sola sesión del journal). Se puede combinar con Ids explícitos.
 
@@ -281,7 +287,7 @@ Solo con GPU antigua o sin driver. **No** recomendarla automáticamente solo por
 - Probar en Windows PowerShell 5.1 y, si es posible, en Windows 10 y en Windows 11.
 - Probar sin Discord instalado y sin Chrome o Brave: el estado debe ser "no aplica", sin errores.
 - Comprobar que todo parsea sin errores de sintaxis antes de dar una fase por terminada.
-- Scripts de `Pruebas/` (el cargador nunca los carga): `Probar-Fase2.ps1`, `Probar-Fase3.ps1` (VM, administrador, piden confirmar y crean y borran objetos ficticios o aplican de verdad), `Probar-Fase4.ps1` (solo lectura, sin administrador), `Probar-Core-SinAdmin.ps1` y `Probar-Motor-SinAdmin.ps1` (sin administrador; se niegan a correr elevados) y `Diagnostico-PuntoRestauracion.ps1`. Cada fase se da por cerrada cuando su script pasa en la VM con 0 fallos.
+- Scripts de `Pruebas/` (el cargador nunca los carga): `Probar-Fase2.ps1`, `Probar-Fase3.ps1` (VM, administrador, piden confirmar y crean y borran objetos ficticios o aplican de verdad), `Probar-Fase4.ps1` (solo lectura, sin administrador), `Probar-Fase5.ps1` (interfaz: abre la ventana real en el propio proceso con `-STA`, no aplica nada real, redirige `%ProgramData%` a una carpeta temporal y guarda capturas PNG en `%TEMP%\OptiLow-capturas\`; no necesita administrador), `Probar-Core-SinAdmin.ps1` y `Probar-Motor-SinAdmin.ps1` (sin administrador; se niegan a correr elevados) y `Diagnostico-PuntoRestauracion.ps1`. Cada fase se da por cerrada cuando su script pasa en la VM con 0 fallos.
 
 ---
 
@@ -309,6 +315,10 @@ Trampas encontradas (todas dieron fallos reales):
 - Un literal numérico como argumento de comando conserva su texto (`0.0` queda "0.0"): en pruebas, usar `[double]0`.
 - `Invoke-WmiMethod -ArgumentList` sigue el orden de parámetros que devuelve WMI (`Description`, `EventType`, `RestorePointType`), no el de la documentación.
 - Variables de prueba con el mismo nombre que un contador (`$ok` pisó a `$script:ok`) y parámetros/variables que solo difieren en mayúsculas (`$Ids` y `$ids` son la misma): cuidado.
+- Una variable con el mismo nombre que un parámetro tipado hereda su tipo: `$titulo = New-TextoUI ...` dentro de una función con `[string]$Titulo` convierte el TextBlock a texto, y `Children.Add` falla con "No se encuentra ninguna sobrecarga para Add". Nombrarlas distinto (`$tbTitulo`).
+- WPF no tiene `Thickness.Parse`: usar `New-EspesorUI` o el constructor. Un ListBox no es tabulable en sí (`IsTabStop` falso: Tab entra en el elemento seleccionado).
+- Un manejador de eventos de WPF escrito como scriptblock debe llamar a funciones globales y llevar su `try/catch` (`Invoke-ManejadorUI`); las variables sueltas del script que lo creó no existen cuando se dispara.
+- `Dispatcher.InvokeShutdown()` es definitivo para el hilo: tras cerrar una ventana no se puede abrir otra en el mismo proceso. Las pruebas que necesitan otro arranque lo hacen en un proceso aparte.
 - `Win32_PhysicalMemory.Speed` dice nanosegundos en la documentación pero devuelve MHz; usar `ConfiguredClockSpeed`. `TotalPhysicalMemory` no es exacta: sumar `Capacity`. `HypervisorPresent` es verdadero en un host con Hyper-V o VBS.
 - `New-CimSession -OperationTimeoutSec` no cortó una consulta lenta; `Get-CimInstance -OperationTimeoutSec` sí (verificado). Para programas nativos, `Process` con `WaitForExit(timeout)` y `Kill`.
 - El cargador promueve a global también las funciones **redefinidas** al recargar un archivo (necesario para sustituirlas en pruebas con funciones de prueba).
