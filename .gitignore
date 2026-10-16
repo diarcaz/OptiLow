@@ -1,0 +1,19 @@
+# Datos de ejecución (nunca dentro del proyecto, pero por si acaso)
+logs/
+backups/
+*.log
+
+# Archivos temporales y de editor
+*.tmp
+*.bak
+~$*
+.vscode/
+.idea/
+
+# Sistema operativo
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Claude Code (configuración local)
+.claude/settings.local.json
