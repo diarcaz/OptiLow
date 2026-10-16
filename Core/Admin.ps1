@@ -34,15 +34,35 @@ function Invoke-RelanzarComoAdministrador {
         return $true
     }
     catch {
-        # Código 1223 = el usuario canceló el cuadro de UAC
-        if ($_.Exception.NativeErrorCode -eq 1223) {
-            Write-Host '[AVISO] Se canceló la solicitud de permisos de administrador.' -ForegroundColor Yellow
+        if (Test-EsCancelacionUAC -Excepcion $_.Exception) {
+            Write-Log -Nivel WARN -Mensaje 'Se canceló la solicitud de permisos. OptiLow necesita ser administrador para continuar.'
         }
         else {
-            Write-Host "[ERROR] No se pudo relanzar como administrador: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Log -Nivel ERROR -Mensaje "No se pudo relanzar como administrador: $($_.Exception.Message)"
         }
         return $false
     }
+}
+
+function Test-EsCancelacionUAC {
+    <#
+    .SYNOPSIS
+        Indica si la excepción corresponde a que el usuario canceló el cuadro de UAC
+        (Win32Exception con código 1223). Start-Process la envuelve en otra excepción,
+        por eso se recorre la cadena de InnerException.
+    #>
+    param(
+        [Parameter(Mandatory)][System.Exception]$Excepcion
+    )
+
+    $actual = $Excepcion
+    while ($actual) {
+        if (($actual -is [System.ComponentModel.Win32Exception]) -and ($actual.NativeErrorCode -eq 1223)) {
+            return $true
+        }
+        $actual = $actual.InnerException
+    }
+    return $false
 }
 
 function Test-EscritorioDeOtroUsuario {

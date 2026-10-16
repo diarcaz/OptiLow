@@ -25,7 +25,7 @@ $global:OptiLowOrdenCore = @(
 $global:OptiLowFuncionesCore = @(
     'Test-DirectorioEscribible', 'Initialize-OptiLowRutas'
     'Initialize-OptiLowLog', 'Write-Log'
-    'Test-EsAdministrador', 'Invoke-RelanzarComoAdministrador', 'Test-EscritorioDeOtroUsuario'
+    'Test-EsAdministrador', 'Invoke-RelanzarComoAdministrador', 'Test-EsCancelacionUAC', 'Test-EscritorioDeOtroUsuario'
 )
 
 function global:Import-OptiLowArchivo {
