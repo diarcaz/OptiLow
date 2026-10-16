@@ -118,6 +118,8 @@ function Add-JournalEntrada {
         Hora   = (Get-Date).ToString('s')
         Estado = 'Pendiente'
     }
+    # Si la entrada la genera un tweak, se guarda su Id (permite deshacer un solo tweak más adelante)
+    $registro['TweakId'] = $global:OptiLow.TweakActual
     foreach ($clave in $Entrada.Keys) { $registro[$clave] = $Entrada[$clave] }
 
     [void]$s.Datos.Entradas.Add($registro)
@@ -195,6 +197,7 @@ function Get-JournalSesiones {
                     Inicio   = $datos.Inicio
                     Estado   = $datos.Estado
                     Entradas = @($datos.Entradas).Count
+                    Tweaks   = @(@($datos.Entradas) | ForEach-Object { $_.TweakId } | Where-Object { $_ } | Select-Object -Unique)
                     Ruta     = $archivo.FullName
                 })
         }

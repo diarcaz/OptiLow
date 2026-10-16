@@ -90,6 +90,10 @@ Reglas:
 - Los bloques no dependen de variables externas; si necesitan datos compartidos, usan una función auxiliar.
 - Los bloques no usan `Write-Host`; solo la función de log del proyecto.
 - Debe existir `Tweaks/_Plantilla.ps1` comentada para crear tweaks nuevos.
+- **Motor (`Core/Tweaks.ps1`):** `Register-Tweak` valida el contrato y **rechaza** el tweak (con un ERROR en el log, sin impedir que se cargue el resto del archivo) si el Id no es válido o está repetido, si la descripción es demasiado corta o si `Aplicar`/`Comprobar`/`Recomendar` usan comandos prohibidos (escritura directa, `sc.exe`, `powercfg`, `Write-Host`...). Los bloques se guardan como texto y se recrean al ejecutarlos.
+- `Aplicar` solo deja salir lo que devuelven las funciones de `Core/` (`Cambiado`, `SinCambios`, `NoAplica`, `Fallido`). `Comprobar` verifica la **configuración**, no el estado en ejecución (cambiar un servicio a Disabled no lo detiene: por eso `telemetria-servicios-off` es `Requiere = Reiniciar`) y devuelve `$true`/`$false`/`$null`; con varios elementos usa `Join-EstadosTweak`.
+- Resultado de un tweak con varios elementos: `Aplicado` si todos los que existen quedaron bien, `NoAplica` solo si no existe ninguno, `Parcial` si alguno falló (p. ej. acceso denegado), `Fallido` si todos fallaron. Una excepción en un bloque se registra y no detiene a los demás tweaks.
+- Cada entrada del journal guarda el `TweakId` del tweak que la generó (permite deshacer un solo tweak más adelante desde la interfaz). Una ejecución de aplicar es **una sola sesión** del journal, aunque incluya varios tweaks. El resumen final avisa de qué tweaks piden reiniciar o cerrar sesión.
 
 ---
 
@@ -143,6 +147,10 @@ Reglas:
 ### Modo consola
 
 `OptiLow.ps1` acepta parámetros para usarse sin interfaz: listar tweaks y su estado, mostrar diagnóstico, aplicar una lista de IDs (o "recomendados"), y omitir el punto de restauración. Sirve para pruebas y automatización.
+
+Parámetros actuales: `-Listar`, `-ListarSesiones`, `-Aplicar <ids separados por comas>` (hasta la fase 4 solo acepta Ids; "recomendados" necesita el diagnóstico de hardware), `-Deshacer` (por defecto la última sesión no restaurada; con `-Sesion <Id>` otra), `-SinPuntoRestauracion`, `-SinPreguntar`, `-SinElevar`. Códigos de salida: 0 bien, 1 fallos o error, 2 cancelado.
+
+`-SinPreguntar` usa siempre la opción segura: nunca activa la Protección del sistema por su cuenta y, si el punto de restauración falla (o ya existe uno reciente y Windows omite otro), cancela, salvo que también se pase `-SinPuntoRestauracion`. Las preguntas y la presentación de la consola viven en `Core/Consola.ps1`; la interfaz gráfica usará directamente el motor (`Core/Tweaks.ps1`, `Journal.ps1`, `PuntoRestauracion.ps1`) sin pasar por ese archivo.
 
 ---
 

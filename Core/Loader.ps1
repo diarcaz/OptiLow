@@ -27,6 +27,8 @@ $global:OptiLowOrdenCore = @(
     'Tareas.ps1'
     'Energia.ps1'
     'PuntoRestauracion.ps1'
+    'Tweaks.ps1'
+    'Consola.ps1'
 )
 
 # Funciones que deben existir tras cargar Core/ (verificación).
@@ -42,6 +44,8 @@ $global:OptiLowFuncionesCore = @(
     'Get-TareaEstado', 'Disable-TareaProgramada', 'Restore-TareaEntrada'
     'Get-PlanesEnergia', 'Get-PlanEnergiaActivo', 'Set-PlanEnergia', 'Restore-PlanEnergiaEntrada'
     'Remove-JournalEntrada'
+    'Register-Tweak', 'Unregister-Tweak', 'Get-Tweak', 'Get-TweakEstado', 'Test-TweakRecomendado', 'Join-EstadosTweak', 'Invoke-Tweak', 'Invoke-TweaksLote'
+    'Show-TweaksConsola', 'Show-SesionesConsola', 'Invoke-AplicarConsola', 'Invoke-DeshacerConsola', 'Read-ConfirmacionConsola'
     'Get-EstadoProteccionSistema', 'Get-PuntosRestauracion', 'New-PuntoRestauracion', 'Enable-ProteccionSistema'
 )
 
