@@ -90,8 +90,28 @@ function Show-SesionesConsola {
 function Format-ValorHw {
     # Auxiliar interna: texto de un dato del diagnóstico ("desconocido" si no se pudo leer).
     param($Valor, [string]$Sufijo = '')
-    if (($null -eq $Valor) -or ($Valor -eq '')) { return 'desconocido' }
+    # OJO: en PowerShell 0 -eq '' es VERDADERO; un 0 es un dato válido (p. ej. 0 días encendido o 0 ranuras libres)
+    if (($null -eq $Valor) -or (($Valor -is [string]) -and ($Valor.Length -eq 0))) { return 'desconocido' }
     return ([string]$Valor + $Sufijo)
+}
+
+function Format-RamHw {
+    <#
+    .SYNOPSIS
+        Texto legible de la RAM: cuando falta el detalle dice "detalle de módulos no disponible", no "desconocido
+        módulo(s); ranuras libres: desconocido de desconocido".
+    #>
+    param($Ram)
+
+    if ((-not $Ram) -or ($null -eq $Ram.InstaladaGB)) { return 'desconocido' }
+    $partes = New-Object System.Collections.ArrayList
+    if ($null -ne $Ram.Modulos) { [void]$partes.Add("$($Ram.Modulos) módulo(s)") } else { [void]$partes.Add('detalle de módulos no disponible') }
+    if (($null -ne $Ram.RanurasTotales) -and ($null -ne $Ram.RanurasLibres)) { [void]$partes.Add("ranuras libres: $($Ram.RanurasLibres) de $($Ram.RanurasTotales)") }
+    elseif ($null -ne $Ram.RanurasTotales) { [void]$partes.Add("$($Ram.RanurasTotales) ranuras (libres: no disponible)") }
+    else { [void]$partes.Add('ranuras: no disponible') }
+    if ($Ram.VelocidadMHz) { [void]$partes.Add("$($Ram.VelocidadMHz) MHz") }
+    elseif ($null -ne $Ram.Modulos) { [void]$partes.Add('velocidad no disponible') }
+    return ("{0} GB instalada  [{1}]" -f $Ram.InstaladaGB, ($partes -join '; '))
 }
 
 function Show-DiagnosticoConsola {
@@ -124,10 +144,7 @@ function Show-DiagnosticoConsola {
     if ($c) { Write-Host ('CPU:       {0}  [{1} núcleos / {2} hilos]' -f (Format-ValorHw $c.Nombre), (Format-ValorHw $c.Nucleos), (Format-ValorHw $c.Hilos)) }
     else { Write-Host 'CPU:       desconocido' }
     $r = $hw.RAM
-    if ($r) {
-        Write-Host ('RAM:       {0} GB instalada  [{1} módulo(s); ranuras libres: {2} de {3}; {4}]' -f (Format-ValorHw $r.InstaladaGB), (Format-ValorHw $r.Modulos), (Format-ValorHw $r.RanurasLibres), (Format-ValorHw $r.RanurasTotales), (Format-ValorHw $r.VelocidadMHz ' MHz'))
-    }
-    else { Write-Host 'RAM:       desconocido' }
+    Write-Host ('RAM:       ' + (Format-RamHw -Ram $r))
 
     if (@($hw.GPUs).Count -eq 0) { Write-Host 'GPU:       desconocido' }
     foreach ($g in @($hw.GPUs)) {
@@ -152,7 +169,9 @@ function Show-DiagnosticoConsola {
     $port = 'desconocido'; if ($hw.EsPortatil -eq $true) { $port = 'sí' } elseif ($hw.EsPortatil -eq $false) { $port = 'no' }
     Write-Host ('Portátil:  {0}' -f $port)
     $ini = 'desconocido'; if ($null -ne $hw.InicioRapido) { $ini = $(if ($hw.InicioRapido) { 'activado' } else { 'desactivado' }) }
-    Write-Host ('Arranque:  {0} días encendido (inicio rápido: {1})' -f (Format-ValorHw $hw.ArranqueDias), $ini)
+    $txtArranque = 'tiempo encendido desconocido'
+    if ($null -ne $hw.ArranqueDias) { $txtArranque = ('{0} días encendido' -f $hw.ArranqueDias) }
+    Write-Host ('Arranque:  {0} (inicio rápido: {1})' -f $txtArranque, $ini)
     if ($hw.ProgramasInicio) { Write-Host ('Inicio:    {0} programas habilitados ({1} deshabilitados)' -f $hw.ProgramasInicio.Habilitados, $hw.ProgramasInicio.Deshabilitados) }
     else { Write-Host 'Inicio:    desconocido' }
     $a = $hw.Administracion

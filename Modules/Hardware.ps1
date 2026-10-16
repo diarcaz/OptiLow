@@ -68,6 +68,61 @@ function Invoke-ConsultaHw {
     return $r
 }
 
+function Add-DatoDesconocido {
+    <#
+    .SYNOPSIS
+        Anota como consulta Desconocida un dato que ninguna consulta pudo dar, aunque la consulta "terminara bien"
+        (por ejemplo, LastBootUpTime vacío). Así un dato que falta SIEMPRE queda reflejado y sale el Info de
+        "datos incompletos". No duplica si la consulta de origen ya figura como fallida.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Nombre,
+        [Parameter(Mandatory)][string]$Motivo,
+        [string]$Origen = ''
+    )
+
+    $e = $global:OptiLow
+    if ((-not $e) -or (-not $e.ContainsKey('HwConsultas')) -or ($null -eq $e.HwConsultas)) { return }
+    # La misma consulta ya figura como "Ok" pero sin datos útiles: se corrige su estado en vez de duplicarla
+    foreach ($c in $e.HwConsultas) {
+        if (($c.Nombre -eq $Nombre) -and ($c.Estado -eq 'Ok')) {
+            $c.Estado = 'Desconocido'
+            $c.Error = $Motivo
+            return
+        }
+    }
+    if ($Origen) {
+        foreach ($c in $e.HwConsultas) {
+            if (($c.Estado -ne 'Ok') -and ($c.Nombre -like "$Origen*")) { return }
+        }
+    }
+    [void]$e.HwConsultas.Add([pscustomobject]@{ Nombre = $Nombre; Estado = 'Desconocido'; Ms = 0; Error = $Motivo })
+}
+
+function Test-DatosDiagnostico {
+    # Auxiliar interna: revisa los datos recolectados y anota como Desconocido los que faltan.
+    param(
+        $Equipo, $Sistema, $Cpu, $Ram, $Gpus, $Disco
+    )
+
+    $vm = ($Equipo.EsMaquinaVirtual -eq $true)
+    if (-not $Equipo.Modelo) { Add-DatoDesconocido -Nombre 'Equipo.Modelo' -Motivo 'fabricante y modelo no disponibles' -Origen 'Equipo' }
+    if (-not $Sistema.Nombre) { Add-DatoDesconocido -Nombre 'Sistema.Nombre' -Motivo 'nombre de Windows no disponible' -Origen 'Sistema' }
+    if ($null -eq $Sistema.ArranqueDias) { Add-DatoDesconocido -Nombre 'Sistema.ArranqueDias' -Motivo 'LastBootUpTime no disponible (no se puede calcular el tiempo encendido)' -Origen 'Sistema' }
+    if ($Cpu -and ($null -eq $Cpu.Hilos)) { Add-DatoDesconocido -Nombre 'CPU.Hilos' -Motivo 'el número de hilos no está disponible' -Origen 'CPU' }
+    if ($Ram) {
+        if ($null -eq $Ram.InstaladaGB) { Add-DatoDesconocido -Nombre 'RAM.Capacidad' -Motivo 'capacidad de RAM no disponible' -Origen 'RAM' }
+        if ($null -eq $Ram.Modulos) { Add-DatoDesconocido -Nombre 'RAM.Modulos' -Motivo 'detalle de módulos no disponible' -Origen 'RAM.Modulos' }
+        if ($null -eq $Ram.RanurasTotales) { Add-DatoDesconocido -Nombre 'RAM.Ranuras' -Motivo 'número de ranuras no disponible' -Origen 'RAM.Ranuras' }
+    }
+    if ((-not $vm) -and (@($Gpus | Where-Object { -not $_.EsVirtual }).Count -eq 0)) { Add-DatoDesconocido -Nombre 'GPU.Principal' -Motivo 'no se detectó ninguna GPU real' -Origen 'GPU' }
+    if ($Disco) {
+        if ((-not $vm) -and ($Disco.Tipo -eq 'Desconocido')) { Add-DatoDesconocido -Nombre 'Disco.Tipo' -Motivo 'no se pudo determinar si es HDD o SSD' -Origen 'Disco' }
+        if ($null -eq $Disco.TamanoGB) { Add-DatoDesconocido -Nombre 'Disco.Espacio' -Motivo 'tamaño y espacio libre no disponibles' -Origen 'Disco' }
+        if ((-not $vm) -and (-not $Disco.Salud)) { Add-DatoDesconocido -Nombre 'Disco.Salud' -Motivo 'salud del disco no disponible' -Origen 'Disco' }
+    }
+}
+
 # ---------------------------------------------------------------------------------------------
 # Patrones editables (Config/*.txt)
 # ---------------------------------------------------------------------------------------------
@@ -723,6 +778,9 @@ function Get-Diagnostico {
 
     $inicioConsulta = Invoke-ConsultaHw -Nombre 'Inicio.Programas' -Bloque { Get-HwProgramasInicio }
     $inicio = $inicioConsulta.Valor | Select-Object -First 1
+
+    # Un dato que falta aunque la consulta "terminara bien" también queda anotado como consulta Desconocida
+    Test-DatosDiagnostico -Equipo $equipo -Sistema $sistema -Cpu $cpu -Ram $ram -Gpus $gpus -Disco $disco
 
     $noVirtuales = @($gpus | Where-Object { -not $_.EsVirtual })
     $principal = $noVirtuales | Where-Object { $_.Activa } | Select-Object -First 1

@@ -369,6 +369,47 @@ T 'Muestra SIMULADO, el perfil, las recomendaciones y las optimizaciones recomen
 T 'Muestra por qué se recomienda cada una' ($txt -match 'GPU antigua')
 
 # ---------------------------------------------------------------------------------------------
+Seccion '13. Correcciones tras la VM (el 0 es un dato válido; los datos que faltan quedan como consulta fallida; textos legibles)'
+T 'Format-ValorHw: 0 y 0.0 se muestran como 0; null y "" como desconocido' (((Format-ValorHw 0) -eq '0') -and ((Format-ValorHw ([double]0)) -eq '0') -and ((Format-ValorHw $null) -eq 'desconocido') -and ((Format-ValorHw '') -eq 'desconocido'))
+$h = New-HardwareSimulado -Perfil Medio
+$h.ArranqueDias = 0.0
+$txt = (Show-DiagnosticoConsola -Hardware $h 6>&1 | Out-String)
+T 'Equipo recién encendido: "Arranque: 0 días encendido" (no "desconocido")' (($txt -match 'Arranque:\s+0 días encendido') -and ($txt -notmatch 'desconocido días'))
+$h.ArranqueDias = $null
+$txt = (Show-DiagnosticoConsola -Hardware $h 6>&1 | Out-String)
+T 'Sin dato: "tiempo encendido desconocido" (frase legible)' (($txt -match 'tiempo encendido desconocido') -and ($txt -notmatch 'desconocido días'))
+$sinMod = [pscustomobject]@{ InstaladaGB = 4; Modulos = $null; RanurasTotales = $null; RanurasLibres = $null; VelocidadMHz = $null }
+$t1 = Format-RamHw -Ram $sinMod
+T "RAM sin detalle de módulos: '$t1'" (($t1 -match 'detalle de módulos no disponible') -and ($t1 -notmatch 'desconocido') -and ($t1 -notmatch ';\s*;'))
+$cero = [pscustomobject]@{ InstaladaGB = 8; Modulos = 2; RanurasTotales = 2; RanurasLibres = 0; VelocidadMHz = 0 }
+$t2 = Format-RamHw -Ram $cero
+T "0 ranuras libres se muestra como 0: '$t2'" (($t2 -match 'ranuras libres: 0 de 2') -and ($t2 -notmatch 'desconocido'))
+$t3 = Format-RamHw -Ram $null
+T 'RAM completamente desconocida: "desconocido"' ($t3 -eq 'desconocido')
+$bajoT = New-HardwareSimulado -Perfil Bajo
+$tit = @($bajoT.Recomendaciones | Where-Object { $_.Id -eq 'poco-espacio' })[0].Titulo
+T "Título de poco espacio sin doble dos puntos: '$tit'" (($tit -notmatch '::') -and ($tit -match 'C:'))
+
+# Un dato que falta aunque la consulta "termine bien" queda como consulta Desconocida y sale el Info
+function global:Get-CimHw {
+    param([string]$Clase, [string]$Namespace = 'root/cimv2', [string]$Filtro)
+    if ($Clase -eq 'Win32_OperatingSystem') { return @([pscustomobject]@{ Caption = 'Windows de prueba'; Version = '10.0'; BuildNumber = '26100'; OSArchitecture = '64 bits'; LastBootUpTime = $null }) }
+    if (@('Win32_PhysicalMemory', 'Win32_PhysicalMemoryArray') -contains $Clase) { return @() }
+    $p = @{ Namespace = $Namespace; ClassName = $Clase; OperationTimeoutSec = 15; ErrorAction = 'Stop' }
+    if ($Filtro) { $p.Filter = $Filtro }
+    return @(Get-CimInstance @p)
+}
+$hwF = Get-Diagnostico -Forzar
+Import-OptiLowArchivo -Ruta (Join-Path $raiz 'Modules\Hardware.ps1')
+$nombres = @($hwF.Consultas | Where-Object { $_.Estado -ne 'Ok' } | ForEach-Object { $_.Nombre })
+Info ('Consultas no Ok: ' + ($nombres -join ', '))
+T 'LastBootUpTime vacío: la consulta "Sistema.ArranqueDias" queda como Desconocido' ($nombres -contains 'Sistema.ArranqueDias')
+T 'Sin módulos de RAM: "RAM.Modulos" y "RAM.Ranuras" quedan como Desconocido' (($nombres -contains 'RAM.Modulos') -and ($nombres -contains 'RAM.Ranuras'))
+T 'Sale el Info "datos incompletos" nombrando ArranqueDias' ((@($hwF.Recomendaciones | Where-Object { $_.Id -eq 'datos-incompletos' })[0].Detalle) -match 'ArranqueDias')
+T 'No hay consultas duplicadas por el mismo origen' ((@($hwF.Consultas | Group-Object Nombre | Where-Object { $_.Count -gt 1 }).Count) -eq 0)
+$salidaF = (Show-DiagnosticoConsola -Hardware $hwF 6>&1 | Out-String)
+T 'En la consola: tiempo encendido desconocido y RAM legible' (($salidaF -match 'tiempo encendido desconocido') -and ($salidaF -match 'detalle de módulos no disponible'))
+# ---------------------------------------------------------------------------------------------
 Seccion '12. DIAGNÓSTICO REAL de este equipo'
 $hw = $hwReal
 T 'Duración registrada' ($hw.DuracionMs -gt 0)
@@ -381,7 +422,7 @@ T 'No está marcado como simulado' (-not $hw.Simulado)
 Info "Equipo: $($hw.Equipo.Fabricante) $($hw.Equipo.Modelo) | VM: $($hw.EsMaquinaVirtual) $($hw.Hipervisor) $($hw.MotivoVM)"
 Info "Perfil: $($hw.Perfil) ($($hw.PerfilMotivo))"
 if ($hw.CPU) { Info "CPU: $($hw.CPU.Nombre) $($hw.CPU.Nucleos)/$($hw.CPU.Hilos)" }
-if ($hw.RAM) { Info "RAM: $($hw.RAM.InstaladaGB) GB, módulos $($hw.RAM.Modulos), ranuras libres $($hw.RAM.RanurasLibres)/$($hw.RAM.RanurasTotales)" }
+Info ('RAM: ' + (Format-RamHw -Ram $hw.RAM))
 foreach ($g in $hw.GPUs) { Info "GPU: $($g.Nombre) | virtual=$($g.EsVirtual) sinDriver=$($g.SinDriver) antigua=$($g.EsAntigua) sinSoporte=$($g.SinSoporteFabricante)" }
 if ($hw.Disco) { Info "Disco: $($hw.Disco.Modelo) | $($hw.Disco.Tipo) ($($hw.Disco.TipoOrigen)) | bus $($hw.Disco.Bus) | salud $($hw.Disco.Salud) | libre $($hw.Disco.LibrePct) % | virtual=$($hw.Disco.EsVirtual)" }
 Info "Inicio: $($hw.ProgramasInicio.Habilitados) habilitados, $($hw.ProgramasInicio.Deshabilitados) deshabilitados (compáralos con el Administrador de tareas > Aplicaciones de inicio)"

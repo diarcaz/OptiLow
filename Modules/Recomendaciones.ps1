@@ -84,7 +84,7 @@ function Get-Recomendaciones {
                         -Detalle 'Cambiar a un SSD es la mayor mejora de rendimiento posible en un equipo de este tipo: el arranque, las aplicaciones y todo el sistema responden mucho más rápido.'))
         }
         if (($null -ne $d.LibrePct) -and ($d.LibrePct -lt $global:OptiLowUmbralEspacioLibrePct)) {
-            [void]$r.Add((New-RecomendacionHw -Nivel Aviso -Id 'poco-espacio' -Titulo "Poco espacio libre en $($d.Unidad): $($d.LibrePct) %" `
+            [void]$r.Add((New-RecomendacionHw -Nivel Aviso -Id 'poco-espacio' -Titulo "Poco espacio libre en $($d.Unidad) (solo queda el $($d.LibrePct) %)" `
                         -Detalle "Quedan $($d.LibreGB) GB de $($d.TamanoGB) GB. Con menos del $($global:OptiLowUmbralEspacioLibrePct) % libre, Windows y las actualizaciones van más lentos. Libera espacio o mueve archivos a otra unidad."))
         }
         if (-not $vm) {
