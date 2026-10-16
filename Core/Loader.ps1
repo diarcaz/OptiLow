@@ -19,6 +19,14 @@ $global:OptiLowOrdenCore = @(
     'Paths.ps1'
     'Logging.ps1'
     'Admin.ps1'
+    'Seguridad.ps1'
+    'Journal.ps1'
+    'Registro.ps1'
+    'Archivos.ps1'
+    'Servicios.ps1'
+    'Tareas.ps1'
+    'Energia.ps1'
+    'PuntoRestauracion.ps1'
 )
 
 # Funciones que deben existir tras cargar Core/ (verificación).
@@ -26,6 +34,14 @@ $global:OptiLowFuncionesCore = @(
     'Test-DirectorioEscribible', 'Initialize-OptiLowRutas'
     'Initialize-OptiLowLog', 'Write-Log'
     'Test-EsAdministrador', 'Invoke-RelanzarComoAdministrador', 'Test-EsCancelacionUAC', 'Test-EscritorioDeOtroUsuario'
+    'Test-AclRespaldos', 'Initialize-CarpetaRespaldos'
+    'Assert-JournalListo', 'Start-JournalSesion', 'Add-JournalEntrada', 'Get-JournalSesiones', 'Undo-JournalSesion'
+    'Get-RegistroEstado', 'Set-RegistroValor', 'Remove-RegistroValor', 'Restore-RegistroEntrada'
+    'Write-ArchivoTexto', 'Get-JsonValor', 'Set-JsonValor', 'Restore-ArchivoEntrada', 'Restore-JsonEntrada'
+    'Get-ServicioEstado', 'Set-ServicioInicio', 'Restore-ServicioEntrada'
+    'Get-TareaEstado', 'Disable-TareaProgramada', 'Restore-TareaEntrada'
+    'Get-PlanesEnergia', 'Get-PlanEnergiaActivo', 'Set-PlanEnergia', 'Restore-PlanEnergiaEntrada'
+    'Get-EstadoProteccionSistema', 'New-PuntoRestauracion', 'Enable-ProteccionSistema'
 )
 
 function global:Import-OptiLowArchivo {
@@ -39,13 +55,15 @@ function global:Import-OptiLowArchivo {
 
     $ErrorActionPreference = 'Stop'
 
-    $olAntes = New-Object 'System.Collections.Generic.HashSet[string]'
-    foreach ($olF in (Get-ChildItem -Path 'Function:\')) { [void]$olAntes.Add($olF.Name) }
+    # Foto de las funciones visibles antes de cargar (nombre -> definición)
+    $olAntes = @{}
+    foreach ($olF in (Get-ChildItem -Path 'Function:\')) { $olAntes[$olF.Name] = $olF.Definition }
 
     . $Ruta
 
+    # Se promueven las nuevas y también las que el archivo redefine (recarga)
     foreach ($olF in (Get-ChildItem -Path 'Function:\')) {
-        if (-not $olAntes.Contains($olF.Name)) {
+        if ((-not $olAntes.ContainsKey($olF.Name)) -or ($olAntes[$olF.Name] -cne $olF.Definition)) {
             Set-Item -Path ('Function:\global:' + $olF.Name) -Value $olF.ScriptBlock
         }
     }

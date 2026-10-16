@@ -34,8 +34,8 @@ function Initialize-OptiLowRutas {
         nunca dentro de la carpeta del programa.
         Si no se puede escribir en la carpeta de logs, se usa %TEMP%\OptiLow\logs como
         respaldo; el aviso se guarda en Avisos y lo emite Initialize-OptiLowLog.
-        Si no se puede escribir en la de respaldos, DirRespaldos queda en $null
-        (la fase del journal decidirá qué hacer; no se usa %TEMP% porque es volátil).
+        La carpeta de respaldos NO se crea aquí (ver Initialize-CarpetaRespaldos): DirRespaldos queda
+        en $null y RutaRespaldos con la ruta prevista. No se usa %TEMP% para respaldos porque es volátil.
     #>
     param(
         [Parameter(Mandatory)][string]$Raiz
@@ -69,11 +69,9 @@ function Initialize-OptiLowRutas {
     }
     $e.DirLogs = $dirLogs
 
-    # Respaldos (journal)
-    $dirResp = [System.IO.Path]::Combine($e.DirDatos, 'backups')
-    if (-not (Test-DirectorioEscribible -Ruta $dirResp)) {
-        [void]$e.Avisos.Add(@('WARN', "No se puede escribir en '$dirResp'. Sin esa carpeta no se podrán guardar respaldos para deshacer."))
-        $dirResp = $null
-    }
-    $e.DirRespaldos = $dirResp
+    # Respaldos (journal): aquí solo se calcula la ruta. La carpeta la crea y protege
+    # Initialize-CarpetaRespaldos (Core/Seguridad.ps1), únicamente con permisos de administrador.
+    # DirRespaldos queda en $null hasta que esa función termine bien; sin él no se aplica ningún cambio.
+    $e.RutaRespaldos = [System.IO.Path]::Combine($e.DirDatos, 'backups')
+    $e.DirRespaldos  = $null
 }

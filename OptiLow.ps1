@@ -68,6 +68,11 @@ catch {
     exit 1
 }
 
+# Carpeta de respaldos protegida (solo se crea elevado). Sin ella no se aplica ningún cambio.
+if ($esAdmin) {
+    [void](Initialize-CarpetaRespaldos)
+}
+
 $apartamento = [System.Threading.Thread]::CurrentThread.GetApartmentState()
 Write-Log -Mensaje "OptiLow iniciado. PowerShell $($PSVersionTable.PSVersion) ($($PSVersionTable.PSEdition)), hilo $apartamento."
 Write-Log -Mensaje "Usuario: $([Security.Principal.WindowsIdentity]::GetCurrent().Name). Administrador: $(if ($esAdmin) { 'sí' } else { 'no' })."

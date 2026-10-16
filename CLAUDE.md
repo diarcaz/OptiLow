@@ -48,6 +48,7 @@ Proyecto_Patata/       Raíz del repositorio
 ├── Tweaks/            Un archivo por categoría de optimización
 ├── Config/            Listas editables sin tocar código
 ├── UI/                MainWindow.xaml y su lógica
+├── Pruebas/           Scripts de autopruebas para VM (el cargador nunca los carga)
 └── docs/              Arquitectura, ideas
 ```
 
@@ -94,8 +95,12 @@ Reglas:
 
 ## Journal de respaldo (deshacer)
 
+- **El journal es obligatorio.** Si `DirRespaldos` es `$null` (sin administrador, `-SinElevar`, o permisos incorrectos), el programa se niega a aplicar cualquier cambio y lo explica.
 - Antes de cada cambio se guarda el estado original en un JSON en `%ProgramData%\OptiLow\backups\`, un archivo por sesión.
-- Tipos de entrada: Registro (incluye si el valor existía, su tipo y su dato), Servicio (valor `Start` y `DelayedAutostart` originales), Tarea programada, Archivo (copia de respaldo) y Plan de energía. También hay entradas tipo Nota para cambios no reversibles.
+- **Seguridad de `backups\`:** solo se crea elevado. Propietario Administradores (`S-1-5-32-544`), sin herencia de `ProgramData`, y acceso (también de lectura) únicamente para Administradores y SYSTEM; los permisos se heredan a los archivos de dentro. Se identifican por SID, no por nombre. Con `-SinElevar` no se crea. Antes de cada sesión y antes de deshacer se verifica; si falla, se niega. Una carpeta preexistente con permisos incorrectos y contenido se renombra a `backups.sin-verificar-<fecha>` (nunca se usa para deshacer ni se borra; se indica su ruta en el log).
+- Tipos de entrada: Registro (incluye si el valor existía, su tipo y su dato, y qué claves creamos), Servicio (valor `Start` y `DelayedAutostart` originales), Tarea programada, Archivo (copia de respaldo con hash), Json (una sola clave de un JSON; al deshacer se restaura solo esa clave y se conserva lo que el usuario cambió después; la copia completa queda como respaldo de emergencia) y Plan de energía. También hay entradas tipo Nota para cambios no reversibles.
+- Registro: soporta DWORD, QWORD, String, ExpandString (se guarda sin expandir variables), MultiString y Binary. Se abre siempre con `RegistryView.Registry64` (sin redirección a `WOW6432Node`). Si la clave o el valor no existían, el deshacer los elimina, pero solo si los creamos nosotros (y una clave solo si queda vacía).
+- Las funciones de escritura devuelven `Cambiado`, `SinCambios`, `NoAplica` o `Fallido`; un fallo se registra en el log (con el nombre del objeto) y no detiene el resto.
 - El archivo se guarda después de cada entrada, no al final, para sobrevivir a un cierre inesperado.
 - "Deshacer última sesión" recorre las entradas en orden inverso y luego marca el archivo como restaurado para no repetirlo.
 - La restauración no se registra a sí misma en un journal nuevo.
@@ -108,8 +113,8 @@ Reglas:
 - Verificar administrador al inicio. Si no lo es, relanzar elevado con UAC (`-Verb RunAs`, `-ExecutionPolicy Bypass`, `-STA`), usando el ejecutable del mismo PowerShell (`$PSHOME`) y no el del host (ISE o VS Code).
 - **Punto de restauración** activado por defecto antes de aplicar:
   - Usar la clase WMI/CIM `SystemRestore` (`CreateRestorePoint`), no `Checkpoint-Computer`, que no existe en PowerShell 7.
-  - Windows limita a uno cada 24 h: ajustar temporalmente `SystemRestorePointCreationFrequency = 0` y restaurar el valor original al terminar, aunque falle.
-  - Intentar activar la Protección del sistema en la unidad del sistema si está apagada.
+  - Windows limita a uno cada 24 h (y en ese caso **omite el punto sin dar error**): ajustar temporalmente `SystemRestorePointCreationFrequency = 0` (a través del journal) y restaurar el valor original en un bloque `finally`. Comprobar que el punto se creó comparando los `SequenceNumber` antes y después.
+  - **`Core/` no activa la Protección del sistema por su cuenta.** `New-PuntoRestauracion` devuelve un motivo claro (protección desactivada, sin espacio asignado, bloqueada por directiva, otro error). La consola o la interfaz preguntan al usuario antes de llamar a `Enable-ProteccionSistema`, avisando de que usa espacio en disco.
   - Si falla, preguntar al usuario si desea continuar, explicando que el journal sigue funcionando.
 - Mostrar confirmación antes de aplicar, con la lista de cambios, y advertencia aparte si hay cambios de riesgo Alto o no reversibles.
 - Detectar si el escritorio pertenece a otro usuario distinto del que corre el script (caso de elevación con credenciales de otra cuenta) y avisar que los cambios de `HKCU` y `%APPDATA%` se aplicarán a la cuenta equivocada.
@@ -189,6 +194,7 @@ Solo con GPU antigua o sin driver. **No** recomendarla automáticamente solo por
 ### Servicios
 - Cambiar el tipo de inicio con `sc.exe config` (no `sc`, que en PowerShell es un alias de `Set-Content`) y comprobar el código de salida. No redirigir stderr de programas nativos con `2>&1` en 5.1.
 - Leer el estado original desde `HKLM\SYSTEM\CurrentControlSet\Services\<nombre>` (`Start` y `DelayedAutostart`) para poder restaurar incluso el inicio automático retrasado.
+- Si `sc.exe` devuelve acceso denegado (servicio protegido), registrar un fallo claro con el nombre del servicio y continuar con lo demás.
 - **SysMain**: recomendar desactivarlo solo en HDD; en SSD ayuda.
 - **WSearch**: nunca recomendado automáticamente, solo opción manual (riesgo Medio: búsqueda más lenta, Outlook afectado).
 - **DiagTrack** y **dmwappushservice**: desactivar. Advertir que no se use en equipos administrados por empresa (Intune/MDM).
