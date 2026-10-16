@@ -77,7 +77,9 @@ try {
     }
     if (Get-Command Invoke-WmiMethod -ErrorAction SilentlyContinue) {
         Probar '3. WMI clásico (Invoke-WmiMethod)' {
-            $r = Invoke-WmiMethod -Namespace 'root\default' -Class SystemRestore -Name CreateRestorePoint -ArgumentList 'OptiLow diag 3', 12, 100
+            # Invoke-WmiMethod pasa los argumentos en el orden que devuelve WMI (Description, EventType, RestorePointType),
+            # no en el de la documentación: por eso el evento (100) va antes que el tipo (12).
+            $r = Invoke-WmiMethod -Namespace 'root\default' -Class SystemRestore -Name CreateRestorePoint -ArgumentList 'OptiLow diag 3', 100, 12
             "ReturnValue=$($r.ReturnValue)"
         }
     }

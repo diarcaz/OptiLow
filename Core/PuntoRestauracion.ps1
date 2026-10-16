@@ -6,7 +6,9 @@
 #   - PowerShell 7 (donde Checkpoint-Computer no existe): CIM SystemRestore.CreateRestorePoint, solo como respaldo.
 #   Motivo: en la VM, CreateRestorePoint por CIM con SystemRestorePointCreationFrequency = 0 terminó sin
 #   crear el punto (en menos de un segundo, había uno de las últimas 24 h), mientras que Checkpoint-Computer
-#   con el mismo ajuste sí lo creó. La causa exacta no está determinada (ver Pruebas/Diagnostico-PuntoRestauracion.ps1).
+#   con el mismo ajuste sí lo creó. Después, Pruebas/Diagnostico-PuntoRestauracion.ps1 mostró que CIM SÍ creó
+#   el punto (ReturnValue=0, ~5 s): el fallo es inconsistente. Hipótesis sin confirmar: el proveedor de
+#   SystemRestore lee la frecuencia al cargarse y ya estaba cargado antes de ajustarla a 0. Tema cerrado.
 #   Por eso el éxito NUNCA se asume: se comprueba comparando los SequenceNumber antes y después, y del
 #   método CIM se registra siempre el ReturnValue.
 #
