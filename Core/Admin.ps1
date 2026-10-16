@@ -14,6 +14,12 @@ function Invoke-RelanzarComoAdministrador {
         $false si el usuario canceló o falló.
     .DESCRIPTION
         Usa el ejecutable del mismo PowerShell ($PSHOME), no el del host (ISE, VS Code).
+        Si Windows PowerShell corre en 32 bits sobre un Windows de 64, relanza la versión de
+        64 bits (Sysnative).
+        Se usa Process.Start con ShellExecute y no Start-Process: en Windows PowerShell 5.1,
+        Start-Process lanza un InvalidOperationException nuevo, sin InnerException, y se
+        pierde el código de error 1223 (UAC cancelado). Process.Start lanza el Win32Exception
+        (PowerShell lo entrega dentro de un MethodInvocationException).
     #>
     param(
         [Parameter(Mandatory)][string]$RutaScript,
@@ -23,14 +29,27 @@ function Invoke-RelanzarComoAdministrador {
     if ($PSVersionTable.PSEdition -eq 'Core') {
         $exe = Join-Path $PSHOME 'pwsh.exe'
     }
+    elseif ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) {
+        $exe = Join-Path $env:windir 'Sysnative\WindowsPowerShell\v1.0\powershell.exe'
+    }
     else {
         $exe = Join-Path $PSHOME 'powershell.exe'
     }
 
-    $lista = @('-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $RutaScript)) + $Argumentos
+    # Una sola cadena de argumentos, con comillas en lo que tenga espacios (rutas con espacios y acentos).
+    $partes = @('-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', $RutaScript) + $Argumentos
+    $cadena = ($partes | ForEach-Object {
+            if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
+        }) -join ' '
 
     try {
-        Start-Process -FilePath $exe -ArgumentList $lista -Verb RunAs -ErrorAction Stop
+        $info = New-Object System.Diagnostics.ProcessStartInfo
+        $info.FileName         = $exe
+        $info.Arguments        = $cadena
+        $info.UseShellExecute  = $true
+        $info.Verb             = 'runas'
+        $info.WorkingDirectory = Split-Path -Parent $RutaScript
+        [void][System.Diagnostics.Process]::Start($info)
         return $true
     }
     catch {
