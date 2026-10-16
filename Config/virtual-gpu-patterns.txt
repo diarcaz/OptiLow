@@ -1,0 +1,22 @@
+# Config/virtual-gpu-patterns.txt
+# Adaptadores de video VIRTUALES o REMOTOS: se excluyen del diagnóstico de GPU (no se evalúan como "sin driver" ni
+# "antigua") y se usan para reconocer máquinas virtuales.
+#
+# Formato: igual que legacy-gpu-patterns.txt (texto que contiene, o re:expresión regular; # comentarios).
+# Nota: "Microsoft Basic Display Adapter" NO va aquí: significa "sin driver de video" y se trata aparte.
+
+Microsoft Basic Render Driver
+Microsoft Remote Display Adapter
+Microsoft Hyper-V Video
+VMware SVGA
+VirtualBox Graphics Adapter
+VBox
+Parallels
+QXL
+Red Hat VirtIO
+VirtIO GPU
+Virtual Display
+Citrix
+Parsec
+Bochs
+Mirage Driver

@@ -1,0 +1,42 @@
+# Config/legacy-gpu-patterns.txt
+# GPU ANTIGUA (nivel 1): gráficos tan viejos que desactivar la aceleración por hardware del navegador y de
+# Discord suele ayudar (o no se pierde nada). Es la ÚNICA lista que activa esa recomendación.
+#
+# NO es "GPU sin soporte del fabricante": una HD 4600 o una GT 730 sin drivers nuevos aceleran bien el
+# navegador y el video, y desactivarles la aceleración en un CPU débil empeora el rendimiento. Esas van en
+# unsupported-gpu-patterns.txt (solo informativo).
+#
+# Formato: una línea por patrón. Sin distinguir mayúsculas.
+#   texto simple    -> coincide si el nombre de la GPU CONTIENE ese texto
+#   re:expresión    -> expresión regular de .NET
+# Las líneas que empiezan con # y las vacías se ignoran. Se prueban contra el nombre que devuelve
+# Win32_VideoController (por ejemplo "Intel(R) HD Graphics 3000" o "NVIDIA GeForce 9400 GT").
+
+# --- Intel ---
+re:\bGMA\b
+Graphics Media Accelerator
+Express Chipset
+# "HD Graphics" SIN número (anclada: no coincide con las numeradas)
+re:^Intel(\(R\))? HD Graphics$
+# Sandy Bridge e Ivy Bridge
+re:^Intel(\(R\))? HD Graphics (2000|2500|3000|4000)$
+
+# --- NVIDIA ---
+# Series 6, 7, 8 y 9 (cuatro cifras: 6600, 7300 GS, 8600 GT, 9400 GT). No afecta a RTX ni a GTX 9xx de tres cifras
+re:GeForce (G |GT |GTS |GTX )?[6-9]\d{3}(?!\d)
+# Series 100, 200 y 300 (GT 210, GT 240, GTS 250, GTX 260, 310M). No coincide con GTX 1050/1660 (cuatro cifras)
+re:GeForce (G |GT |GTS |GTX )?[1-3]\d{2}M?(?!\d)
+# Fermi, series 400 y 500 (GT 430, GTX 460, GTX 560 Ti, GT 540M)
+re:GeForce (GT |GTS |GTX )?[45]\d{2}M?(?!\d)
+
+# --- AMD / ATI ---
+re:^ATI\b
+# Radeon HD 2000 a 6000 (HD 5450, HD 6450, HD 6310, HD 6520G). La HD 7000 va en unsupported-gpu-patterns.txt
+re:Radeon HD [2-6]\d{3}
+
+# --- Otras marcas antiguas ---
+re:^S3 Graphics
+re:^SiS\b
+re:^VIA\b
+S3G
+Matrox

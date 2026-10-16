@@ -45,7 +45,8 @@ $global:OptiLowFuncionesCore = @(
     'Get-PlanesEnergia', 'Get-PlanEnergiaActivo', 'Set-PlanEnergia', 'Restore-PlanEnergiaEntrada'
     'Remove-JournalEntrada'
     'Register-Tweak', 'Unregister-Tweak', 'Get-Tweak', 'Get-TweakEstado', 'Test-TweakRecomendado', 'Join-EstadosTweak', 'Invoke-Tweak', 'Invoke-TweaksLote'
-    'Show-TweaksConsola', 'Show-SesionesConsola', 'Invoke-AplicarConsola', 'Invoke-DeshacerConsola', 'Read-ConfirmacionConsola'
+    'New-Recomendacion', 'Get-TweakRecomendacion', 'Get-TweaksRecomendados'
+    'Show-TweaksConsola', 'Show-SesionesConsola', 'Show-DiagnosticoConsola', 'Invoke-AplicarConsola', 'Invoke-DeshacerConsola', 'Read-ConfirmacionConsola'
     'Get-EstadoProteccionSistema', 'Get-PuntosRestauracion', 'New-PuntoRestauracion', 'Enable-ProteccionSistema'
 )
 

@@ -19,6 +19,23 @@
             if ($s.Existe) { $s.Inicio -eq 'Disabled' } else { $null }
         }
         Join-EstadosTweak -Estados @($estados)
+    } `
+    -Recomendar {
+        param($Hardware)
+        # Bloquean DomainJoined, AzureAdJoined, EnterpriseJoined y PartOfDomain; WorkplaceJoined solo es un aviso
+        $a = $Hardware.Administracion
+        if (-not $a) {
+            New-Recomendacion -Si $false -Motivo 'No hay datos de administración del equipo.'
+        }
+        elseif ($a.Administrado -eq $true) {
+            New-Recomendacion -Si $false -Motivo ('No recomendado: equipo administrado (' + ($a.Bloqueantes -join '; ') + '). dmwappushservice participa en la administración de dispositivos (Intune/MDM).')
+        }
+        elseif ($null -eq $a.Administrado) {
+            New-Recomendacion -Si $false -Motivo 'No recomendado: no se pudo comprobar si el equipo está administrado por una organización.'
+        }
+        else {
+            New-Recomendacion -Si $true -Motivo 'Equipo no administrado por una organización: DiagTrack y dmwappushservice consumen recursos en segundo plano.'
+        }
     })
 
 # Tareas programadas de telemetría que más cargan un HDD. Si alguna no existe en esa versión de Windows, se omite.
@@ -51,4 +68,18 @@
             if ($e.Existe) { -not $e.Habilitada } else { $null }
         }
         Join-EstadosTweak -Estados @($estados)
+    } `
+    -Recomendar {
+        param($Hardware)
+        # Estas tareas son las que más cargan un HDD
+        $d = $Hardware.Disco
+        if ($d -and $d.Fiable -and ($d.Tipo -eq 'HDD')) {
+            New-Recomendacion -Si $true -Motivo "El disco del sistema es un HDD ($($d.Modelo)): estas tareas provocan lecturas y escrituras que se notan."
+        }
+        elseif ($Hardware.Perfil -eq 'Bajo') {
+            New-Recomendacion -Si $true -Motivo "Equipo de perfil Bajo ($($Hardware.PerfilMotivo))."
+        }
+        else {
+            New-Recomendacion -Si $false -Motivo 'El disco no es un HDD y el equipo no es de perfil Bajo.'
+        }
     })

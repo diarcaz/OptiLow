@@ -87,6 +87,121 @@ function Show-SesionesConsola {
     return 0
 }
 
+function Format-ValorHw {
+    # Auxiliar interna: texto de un dato del diagnóstico ("desconocido" si no se pudo leer).
+    param($Valor, [string]$Sufijo = '')
+    if (($null -eq $Valor) -or ($Valor -eq '')) { return 'desconocido' }
+    return ([string]$Valor + $Sufijo)
+}
+
+function Show-DiagnosticoConsola {
+    <#
+    .SYNOPSIS
+        Muestra el diagnóstico de hardware en consola: datos, perfil, recomendaciones, optimizaciones recomendadas y
+        cuánto tardó. Solo muestra (no escribe nada en el sistema).
+    .EXAMPLE
+        Show-DiagnosticoConsola -Hardware (Get-Diagnostico)
+    #>
+    param(
+        [Parameter(Mandatory)]$Hardware
+    )
+
+    $hw = $Hardware
+    Write-Host ''
+    if ($hw.Simulado) {
+        Write-Host '=== DIAGNÓSTICO SIMULADO (datos de prueba, solo para ver: no se puede aplicar nada) ===' -ForegroundColor Magenta
+    }
+    else {
+        Write-Host '=== Diagnóstico de hardware ===' -ForegroundColor Cyan
+    }
+
+    $e = $hw.Equipo
+    Write-Host ('Equipo:    {0} {1}' -f (Format-ValorHw $e.Fabricante), (Format-ValorHw $e.Modelo))
+    if ($hw.EsMaquinaVirtual -eq $true) { Write-Host ("           Máquina virtual (hipervisor: {0}). Motivo: {1}" -f (Format-ValorHw $hw.Hipervisor), $hw.MotivoVM) -ForegroundColor Cyan }
+    $w = $hw.Windows
+    if ($w) { Write-Host ('Windows:   {0} (compilación {1}, {2})' -f (Format-ValorHw $w.Nombre), (Format-ValorHw $w.Compilacion), (Format-ValorHw $w.Arquitectura)) }
+    $c = $hw.CPU
+    if ($c) { Write-Host ('CPU:       {0}  [{1} núcleos / {2} hilos]' -f (Format-ValorHw $c.Nombre), (Format-ValorHw $c.Nucleos), (Format-ValorHw $c.Hilos)) }
+    else { Write-Host 'CPU:       desconocido' }
+    $r = $hw.RAM
+    if ($r) {
+        Write-Host ('RAM:       {0} GB instalada  [{1} módulo(s); ranuras libres: {2} de {3}; {4}]' -f (Format-ValorHw $r.InstaladaGB), (Format-ValorHw $r.Modulos), (Format-ValorHw $r.RanurasLibres), (Format-ValorHw $r.RanurasTotales), (Format-ValorHw $r.VelocidadMHz ' MHz'))
+    }
+    else { Write-Host 'RAM:       desconocido' }
+
+    if (@($hw.GPUs).Count -eq 0) { Write-Host 'GPU:       desconocido' }
+    foreach ($g in @($hw.GPUs)) {
+        $marcas = @()
+        if ($hw.GPUPrincipal -and ($g.Nombre -eq $hw.GPUPrincipal.Nombre)) { $marcas += 'principal' }
+        if ($g.EsVirtual) { $marcas += 'virtual/remota' }
+        if ($g.SinDriver) { $marcas += 'SIN DRIVER' }
+        if ($g.EsAntigua) { $marcas += 'antigua' }
+        if ($g.SinSoporteFabricante) { $marcas += 'sin soporte activo del fabricante' }
+        $fecha = 'sin fecha'; if ($g.FechaDriver) { $fecha = ('{0:yyyy-MM-dd}' -f $g.FechaDriver) }
+        Write-Host ('GPU:       {0}  [driver {1}, {2}]{3}' -f $g.Nombre, (Format-ValorHw $g.DriverVersion), $fecha, $(if ($marcas.Count -gt 0) { '  <' + ($marcas -join ', ') + '>' } else { '' }))
+    }
+
+    $d = $hw.Disco
+    if ($d) {
+        $tipoTxt = $d.Tipo; if ($d.EsNVMe) { $tipoTxt = 'SSD NVMe' }
+        Write-Host ('Disco:     {0} {1}  [{2} ({3}); {4} GB, libre {5} GB = {6} %; salud {7}]' -f $d.Unidad, (Format-ValorHw $d.Modelo), $tipoTxt, (Format-ValorHw $d.TipoOrigen), (Format-ValorHw $d.TamanoGB), (Format-ValorHw $d.LibreGB), (Format-ValorHw $d.LibrePct), (Format-ValorHw $d.Salud))
+        if ($d.EsVirtual) { Write-Host '           (disco virtual: el tipo y la salud no son fiables)' -ForegroundColor DarkGray }
+    }
+    else { Write-Host 'Disco:     desconocido' }
+
+    $port = 'desconocido'; if ($hw.EsPortatil -eq $true) { $port = 'sí' } elseif ($hw.EsPortatil -eq $false) { $port = 'no' }
+    Write-Host ('Portátil:  {0}' -f $port)
+    $ini = 'desconocido'; if ($null -ne $hw.InicioRapido) { $ini = $(if ($hw.InicioRapido) { 'activado' } else { 'desactivado' }) }
+    Write-Host ('Arranque:  {0} días encendido (inicio rápido: {1})' -f (Format-ValorHw $hw.ArranqueDias), $ini)
+    if ($hw.ProgramasInicio) { Write-Host ('Inicio:    {0} programas habilitados ({1} deshabilitados)' -f $hw.ProgramasInicio.Habilitados, $hw.ProgramasInicio.Deshabilitados) }
+    else { Write-Host 'Inicio:    desconocido' }
+    $a = $hw.Administracion
+    if ($a) {
+        $txtAdm = 'no se pudo comprobar'
+        if ($a.Administrado -eq $true) { $txtAdm = 'SÍ: ' + ($a.Bloqueantes -join '; ') } elseif ($a.Administrado -eq $false) { $txtAdm = 'no (sin dominio ni Entra ID)' }
+        Write-Host ('Administrado: {0}' -f $txtAdm)
+    }
+
+    $colorPerfil = 'White'
+    if ($hw.Perfil -eq 'Bajo') { $colorPerfil = 'Yellow' } elseif ($hw.Perfil -eq 'Alto') { $colorPerfil = 'Green' }
+    Write-Host ''
+    Write-Host ('PERFIL: {0}  ({1})' -f $hw.Perfil, $hw.PerfilMotivo) -ForegroundColor $colorPerfil
+
+    Write-Host ''
+    Write-Host '--- Recomendaciones ---' -ForegroundColor Cyan
+    foreach ($rec in @($hw.Recomendaciones)) {
+        $color = switch ($rec.Nivel) { 'Crítico' { 'Red' } 'Aviso' { 'Yellow' } 'Info' { 'Cyan' } default { 'Gray' } }
+        Write-Host ('[{0}] {1}' -f $rec.Nivel, $rec.Titulo) -ForegroundColor $color
+        Write-Host ('        {0}' -f $rec.Detalle) -ForegroundColor DarkGray
+    }
+
+    if (@(Get-Tweak).Count -gt 0) {
+        Write-Host ''
+        Write-Host '--- Optimizaciones recomendadas para este equipo ---' -ForegroundColor Cyan
+        foreach ($t in @(Get-TweaksRecomendados -Hardware $hw)) {
+            $marca = 'no recomendada'; $color = 'DarkGray'
+            if ($t.Recomendado) { $marca = 'RECOMENDADA'; $color = 'Green' }
+            Write-Host ('{0,-15} {1,-11} {2}' -f $marca, $t.Estado, $t.Id) -ForegroundColor $color
+            if ($t.Motivo) { Write-Host ('        {0}' -f $t.Motivo) -ForegroundColor DarkGray }
+        }
+    }
+
+    Write-Host ''
+    if ($hw.Simulado) {
+        Write-Host 'Diagnóstico simulado: no se consultó el hardware real.' -ForegroundColor Magenta
+    }
+    else {
+        Write-Host ('Diagnóstico completado en {0:N1} s.' -f ($hw.DuracionMs / 1000)) -ForegroundColor Gray
+        $consultas = @($hw.Consultas)
+        $lentas = @($consultas | Sort-Object Ms -Descending | Select-Object -First 3)
+        if ($lentas.Count -gt 0) { Write-Host ('Consultas más lentas: ' + (($lentas | ForEach-Object { '{0} ({1} ms)' -f $_.Nombre, $_.Ms }) -join ', ')) -ForegroundColor Gray }
+        $malas = @($consultas | Where-Object { $_.Estado -ne 'Ok' })
+        if ($malas.Count -gt 0) { Write-Host ('Sin datos (marcadas como desconocidas): ' + (($malas | ForEach-Object { '{0} [{1}]' -f $_.Nombre, $_.Estado }) -join ', ')) -ForegroundColor Yellow }
+        if ($hw.DuracionMs -gt 10000) { Write-Host 'Aviso: el diagnóstico tardó más de 10 s (equipo lento o alguna consulta con problemas).' -ForegroundColor Yellow }
+    }
+    Write-Host ''
+}
+
 function Show-ResumenConsola {
     # Auxiliar interna: resumen final de una aplicación de tweaks.
     param(
@@ -192,12 +307,45 @@ function Invoke-AplicarConsola {
         Invoke-AplicarConsola -Ids 'efectos-transparencia-off'
     #>
     param(
-        [Parameter(Mandatory)][string[]]$Ids,
+        [string[]]$Ids = @(),
+        [switch]$Recomendados,
         [switch]$SinPuntoRestauracion,
         [switch]$SinPreguntar
     )
 
     $ids = @($Ids | Where-Object { $_ } | Select-Object -Unique)
+
+    if ($Recomendados) {
+        # Diagnóstico REAL (nunca simulado) y bloque Recomendar de cada tweak con ese objeto, mostrando el motivo
+        if (-not (Get-Command -Name 'Get-Diagnostico' -ErrorAction SilentlyContinue)) {
+            Write-Log -Nivel ERROR -Mensaje 'El módulo de diagnóstico (Modules/Hardware.ps1) no está cargado; no se puede usar "recomendados".'
+            return 1
+        }
+        if ($global:OptiLow.ContainsKey('SimulacionActiva') -and $global:OptiLow.SimulacionActiva) {
+            Write-Log -Nivel ERROR -Mensaje 'Con un perfil simulado no se puede aplicar nada.'
+            return 1
+        }
+        Write-Host 'Analizando el equipo para decidir qué optimizaciones recomendar...' -ForegroundColor Cyan
+        $hw = Get-Diagnostico
+        $rec = @(Get-TweaksRecomendados -Hardware $hw)
+        Write-Host ('Perfil del equipo: {0} ({1}). Diagnóstico en {2:N1} s.' -f $hw.Perfil, $hw.PerfilMotivo, ($hw.DuracionMs / 1000)) -ForegroundColor Gray
+        Write-Host ''
+        foreach ($t in $rec) {
+            if ($t.Seleccionable) { $marca = 'SE APLICA'; $color = 'Green' }
+            elseif ($t.Recomendado) { $marca = 'ya aplicada'; $color = 'DarkGray' }
+            else { $marca = 'no recomendada'; $color = 'DarkGray' }
+            Write-Host ('  {0,-15} {1,-11} {2}' -f $marca, $t.Estado, $t.Id) -ForegroundColor $color
+            if ($t.Motivo) { Write-Host ('      Por qué: {0}' -f $t.Motivo) -ForegroundColor Gray }
+        }
+        $ids = @($ids + @($rec | Where-Object { $_.Seleccionable } | ForEach-Object { $_.Id }) | Select-Object -Unique)
+        if ($ids.Count -eq 0) {
+            Write-Host ''
+            Write-Host 'No hay optimizaciones recomendadas pendientes para este equipo.'
+            return 0
+        }
+        Write-Host ''
+    }
+
     $desconocidos = @($ids | Where-Object { -not (Get-Tweak -Id $_) })
     if ($desconocidos.Count -gt 0) {
         Write-Log -Nivel ERROR -Mensaje "No existen estas optimizaciones: $($desconocidos -join ', '). Usa -Listar para ver las disponibles. No se aplicó nada."

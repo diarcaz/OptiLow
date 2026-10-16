@@ -1,0 +1,27 @@
+# Config/unsupported-gpu-patterns.txt
+# GPUs cuyos drivers YA NO TIENEN SOPORTE ACTIVO del fabricante (solo correcciones críticas o ninguna).
+# Es solo INFORMATIVO (nivel Info): NO cuenta como "GPU antigua" y NO recomienda desactivar la aceleración por
+# hardware, porque estas GPUs aceleran bien el navegador y el video. Las "GPU antiguas" van en legacy-gpu-patterns.txt.
+#
+# Formato: igual que legacy-gpu-patterns.txt (texto que contiene, o re:expresión regular; # comentarios).
+#
+# Criterio y fuentes (verificar antes de ampliar): Intel pasó la 6.ª a 10.ª generación a soporte heredado el
+# 27/07/2022 (artículo de soporte de Intel); NVIDIA cerró Kepler en la rama R470; AMD cerró GCN 1-3 con
+# Adrenalin 21.5.2 (2021). Haswell/Broadwell no están confirmados por Intel: se incluyen por antigüedad.
+
+# --- Nivel 2 (activas) ---
+# Intel Haswell (4.ª gen) y Broadwell (5.ª gen)
+re:HD Graphics (4200|4400|4600|5000|5300|5500|5600|6000)$
+re:Iris.*Graphics (5100|5200|6100|6200)$
+# NVIDIA Kepler: GT/GTX 6xx y 7xx, excepto GTX 745/750/750 Ti (son Maxwell, siguen con soporte)
+re:GeForce (GT |GTX )?(6\d{2}|7[0-3]\d|74[0-4]|7[6-8]\d)M?(?!\d)
+# AMD: Radeon HD 7000 y 8000, R5/R7/R9 (serie 200/300 y APU "R5 Graphics"), Fury y Nano
+re:Radeon HD [78]\d{3}
+re:Radeon(\(TM\))? R[2-9]\b
+re:Radeon.*\b(Fury|Nano)\b
+
+# --- Nivel 3 (COMENTADAS: soporte heredado desde 2022 pero aún usables; descomenta para verlas como Info) ---
+# Intel 6.ª a 10.ª generación
+# re:HD Graphics (5[1-3]0|6[1-3]0)$
+# re:UHD Graphics 6[1-3]0$
+# re:Iris.*Plus Graphics (640|650|655)$

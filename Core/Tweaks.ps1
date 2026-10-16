@@ -238,6 +238,58 @@ function Get-TweakEstado {
     return [pscustomobject]@{ Id = $Id; Estado = $estado; Detalle = '' }
 }
 
+function New-Recomendacion {
+    <#
+    .SYNOPSIS
+        Auxiliar para los bloques Recomendar: devuelve la decisión junto con el MOTIVO (se muestra al usuario).
+    .EXAMPLE
+        New-Recomendacion -Si $true -Motivo 'GPU antigua detectada'
+    #>
+    param(
+        [Parameter(Mandatory)][bool]$Si,
+        [string]$Motivo = ''
+    )
+    return [pscustomobject]@{ Recomendar = $Si; Motivo = $Motivo }
+}
+
+function Get-TweakRecomendacion {
+    <#
+    .SYNOPSIS
+        Ejecuta el bloque Recomendar de un tweak con el objeto de hardware y devuelve la decisión y su motivo.
+    .DESCRIPTION
+        El bloque puede devolver $true/$false o un objeto con Recomendar y Motivo (ver New-Recomendacion).
+        Sin bloque Recomendar el tweak nunca se recomienda.
+    .OUTPUTS
+        Id, Recomendado, Motivo, TieneBloque y Error.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Id,
+        [Parameter(Mandatory)]$Hardware
+    )
+
+    $def = Get-Tweak -Id $Id | Select-Object -First 1
+    if (-not $def) { throw "No existe el tweak '$Id'." }
+    if (-not $def.Recomendar) {
+        return [pscustomobject]@{ Id = $Id; Recomendado = $false; Motivo = 'No tiene criterio de recomendación.'; TieneBloque = $false; Error = '' }
+    }
+    try {
+        $salida = @(Invoke-BloqueTweak -Texto $def.Recomendar -Argumentos @($Hardware))
+        if ($salida.Count -ne 1) { throw "El bloque Recomendar devolvió $($salida.Count) valores y debe devolver uno." }
+        $v = $salida[0]
+        if ($v -is [bool]) {
+            return [pscustomobject]@{ Id = $Id; Recomendado = $v; Motivo = ''; TieneBloque = $true; Error = '' }
+        }
+        if ($v -and ($v.PSObject.Properties['Recomendar'])) {
+            return [pscustomobject]@{ Id = $Id; Recomendado = [bool]$v.Recomendar; Motivo = [string]$v.Motivo; TieneBloque = $true; Error = '' }
+        }
+        throw "El bloque Recomendar devolvió '$v' y debe devolver `$true, `$false o New-Recomendacion."
+    }
+    catch {
+        Write-Log -Nivel ERROR -Mensaje "Tweak '$Id': error en el bloque Recomendar: $($_.Exception.Message)"
+        return [pscustomobject]@{ Id = $Id; Recomendado = $false; Motivo = 'Error al evaluar la recomendación.'; TieneBloque = $true; Error = $_.Exception.Message }
+    }
+}
+
 function Test-TweakRecomendado {
     <#
     .SYNOPSIS
@@ -247,19 +299,39 @@ function Test-TweakRecomendado {
         [Parameter(Mandatory)][string]$Id,
         [Parameter(Mandatory)]$Hardware
     )
-
-    $def = Get-Tweak -Id $Id | Select-Object -First 1
-    if ((-not $def) -or (-not $def.Recomendar)) { return $false }
-    try {
-        $salida = @(Invoke-BloqueTweak -Texto $def.Recomendar -Argumentos @($Hardware))
-        return ($salida.Count -eq 1) -and ($salida[0] -eq $true)
-    }
-    catch {
-        Write-Log -Nivel ERROR -Mensaje "Tweak '$Id': error en el bloque Recomendar: $($_.Exception.Message)"
-        return $false
-    }
+    return [bool](Get-TweakRecomendacion -Id $Id -Hardware $Hardware).Recomendado
 }
 
+function Get-TweaksRecomendados {
+    <#
+    .SYNOPSIS
+        Para cada tweak registrado: ¿se recomienda para este hardware?, por qué, y su estado actual.
+    .DESCRIPTION
+        Seleccionable = recomendado y todavía pendiente (omite los ya aplicados y los que no aplican). Es lo que usa
+        "-Aplicar recomendados" y lo que usará el botón "Seleccionar recomendadas" de la interfaz. Solo lee.
+    .EXAMPLE
+        Get-TweaksRecomendados -Hardware (Get-Diagnostico) | Format-Table Id, Recomendado, Estado, Motivo
+    #>
+    param(
+        [Parameter(Mandatory)]$Hardware
+    )
+
+    $lista = New-Object System.Collections.ArrayList
+    foreach ($def in (Get-Tweak)) {
+        $rec = Get-TweakRecomendacion -Id $def.Id -Hardware $Hardware
+        $estado = Get-TweakEstado -Id $def.Id
+        $pendiente = @('Pendiente', 'Desconocido', 'Error') -contains $estado.Estado
+        [void]$lista.Add([pscustomobject]@{
+                Id           = $def.Id
+                Nombre       = $def.Nombre
+                Recomendado  = $rec.Recomendado
+                Motivo       = $rec.Motivo
+                Estado       = $estado.Estado
+                Seleccionable = ($rec.Recomendado -and $pendiente)
+            })
+    }
+    return @($lista)
+}
 function Invoke-Tweak {
     <#
     .SYNOPSIS

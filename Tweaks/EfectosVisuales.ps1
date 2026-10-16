@@ -18,6 +18,16 @@
     } `
     -Recomendar {
         param($Hardware)
-        # Propuesta de la fase 3 (a revisar en la fase 4): se preselecciona en equipos de perfil Bajo
-        $Hardware.Perfil -eq 'Bajo'
+        # Criterio acordado: perfil Bajo, GPU antigua o GPU sin driver
+        $motivos = @()
+        if ($Hardware.Perfil -eq 'Bajo') { $motivos += "equipo de perfil Bajo ($($Hardware.PerfilMotivo))" }
+        $g = $Hardware.GPUPrincipal
+        if ($g -and $g.SinDriver) { $motivos += "GPU sin driver ($($g.Nombre))" }
+        elseif ($g -and $g.EsAntigua) { $motivos += "GPU antigua ($($g.Nombre))" }
+        if ($motivos.Count -gt 0) {
+            New-Recomendacion -Si $true -Motivo ($motivos -join '; ')
+        }
+        else {
+            New-Recomendacion -Si $false -Motivo "Perfil $($Hardware.Perfil) y GPU sin problemas: no hace falta."
+        }
     })

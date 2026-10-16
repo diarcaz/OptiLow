@@ -12,9 +12,14 @@
     Lista las optimizaciones registradas con su estado actual (solo lee).
 .PARAMETER ListarSesiones
     Lista las sesiones del journal de respaldo (requiere administrador).
+.PARAMETER Diagnostico
+    Muestra el diagnóstico de hardware (solo lee): datos, perfil, recomendaciones y optimizaciones recomendadas.
+.PARAMETER PerfilSimulado
+    Bajo, Medio o Alto. Con -Diagnostico, muestra datos de PRUEBA en vez del hardware real, para ver cómo cambian
+    las recomendaciones. Bloqueo estricto: con un perfil simulado no se puede aplicar ni deshacer nada.
 .PARAMETER Aplicar
-    Ids de las optimizaciones a aplicar, separados por comas. Una ejecución es una sola sesión del journal.
-    ("recomendados" llegará en la fase 4, con el diagnóstico de hardware.)
+    Ids de las optimizaciones a aplicar, separados por comas. La palabra "recomendados" añade las que el
+    diagnóstico recomienda para este equipo (y muestra por qué). Una ejecución es una sola sesión del journal.
 .PARAMETER Deshacer
     Deshace una sesión del journal: por defecto la última que no esté restaurada.
 .PARAMETER Sesion
@@ -42,6 +47,8 @@ param(
     [switch]$Consola,
     [switch]$Listar,
     [switch]$ListarSesiones,
+    [switch]$Diagnostico,
+    [ValidateSet('Bajo', 'Medio', 'Alto')][string]$PerfilSimulado,
     [string[]]$Aplicar,
     [switch]$Deshacer,
     [string]$Sesion,
@@ -66,7 +73,10 @@ $idsAplicar = @()
 if ($PSBoundParameters.ContainsKey('Aplicar')) {
     $idsAplicar = @($Aplicar | ForEach-Object { $_ -split '[,;\s]+' } | Where-Object { $_ })
 }
-$hayAccion = $Listar -or $ListarSesiones -or $Deshacer -or $PSBoundParameters.ContainsKey('Aplicar')
+# "recomendados" no es un Id: pide las optimizaciones que recomienda el diagnóstico
+$pedirRecomendados = @($idsAplicar | Where-Object { $_ -ieq 'recomendados' }).Count -gt 0
+$idsAplicar = @($idsAplicar | Where-Object { $_ -ine 'recomendados' })
+$hayAccion = $Listar -or $ListarSesiones -or $Diagnostico -or $Deshacer -or $PSBoundParameters.ContainsKey('Aplicar')
 
 # --- 1. Administrador (antes de tocar nada en disco) ---
 # Se carga solo lo mínimo de Core para comprobarlo; el resto se carga ya elevado.
@@ -84,8 +94,9 @@ catch {
 $errorParametros = $null
 if ($Sesion -and -not $Deshacer) { $errorParametros = '-Sesion solo se usa junto con -Deshacer.' }
 elseif ($Deshacer -and $PSBoundParameters.ContainsKey('Aplicar')) { $errorParametros = '-Deshacer y -Aplicar no se pueden usar a la vez.' }
-elseif ($PSBoundParameters.ContainsKey('Aplicar') -and $idsAplicar.Count -eq 0) { $errorParametros = '-Aplicar necesita al menos un Id (usa -Listar para verlos).' }
-elseif ($idsAplicar -contains 'recomendados') { $errorParametros = '"recomendados" estará disponible en la fase 4 (necesita el diagnóstico de hardware). Por ahora indica los Ids (usa -Listar).' }
+elseif ($PSBoundParameters.ContainsKey('Aplicar') -and ($idsAplicar.Count -eq 0) -and (-not $pedirRecomendados)) { $errorParametros = '-Aplicar necesita al menos un Id o la palabra "recomendados" (usa -Listar para ver los Ids).' }
+elseif ($PerfilSimulado -and ($Deshacer -or $PSBoundParameters.ContainsKey('Aplicar'))) { $errorParametros = '-PerfilSimulado solo sirve para ver el diagnóstico: con un perfil simulado no se puede aplicar ni deshacer nada.' }
+elseif ($PerfilSimulado -and -not $Diagnostico) { $errorParametros = '-PerfilSimulado se usa junto con -Diagnostico.' }
 if ($errorParametros) {
     Write-Host "[ERROR] $errorParametros" -ForegroundColor Red
     Wait-CierreVentana
@@ -135,6 +146,9 @@ catch {
     exit 1
 }
 
+# Bloqueo estricto: con un perfil simulado, Assert-JournalListo rechaza cualquier escritura o deshacer
+if ($PerfilSimulado) { $global:OptiLow.SimulacionActiva = $true }
+
 # Carpeta de respaldos protegida (solo se crea elevado). Sin ella no se aplica ningún cambio.
 if ($esAdmin) {
     [void](Initialize-CarpetaRespaldos)
@@ -162,6 +176,16 @@ Write-Log -Nivel OK -Mensaje "Carga terminada. Archivos de Modules/Tweaks cargad
 
 # --- 5. Acciones de consola (solo con una acción explícita) ---
 $codigo = 0
+if ($Diagnostico) {
+    if (-not (Get-Command -Name 'Get-Diagnostico' -ErrorAction SilentlyContinue)) {
+        Write-Log -Nivel ERROR -Mensaje 'El módulo de diagnóstico (Modules/Hardware.ps1) no se cargó: revisa el log.'
+        $codigo = 1
+    }
+    else {
+        if ($PerfilSimulado) { $hw = New-HardwareSimulado -Perfil $PerfilSimulado } else { $hw = Get-Diagnostico -Forzar }
+        Show-DiagnosticoConsola -Hardware $hw
+    }
+}
 if ($ListarSesiones) {
     $codigo = [int](@(Show-SesionesConsola)[-1])
 }
@@ -172,11 +196,11 @@ if ($Deshacer) {
     $codigo = [int](@(Invoke-DeshacerConsola -Sesion $Sesion -SinPreguntar:$SinPreguntar)[-1])
 }
 elseif ($PSBoundParameters.ContainsKey('Aplicar')) {
-    $codigo = [int](@(Invoke-AplicarConsola -Ids $idsAplicar -SinPuntoRestauracion:$SinPuntoRestauracion -SinPreguntar:$SinPreguntar)[-1])
+    $codigo = [int](@(Invoke-AplicarConsola -Ids $idsAplicar -Recomendados:$pedirRecomendados -SinPuntoRestauracion:$SinPuntoRestauracion -SinPreguntar:$SinPreguntar)[-1])
 }
 
 if ((-not $hayAccion) -and (-not $Consola)) {
-    Write-Log -Nivel INFO -Mensaje 'La interfaz gráfica aún no existe (fase 5). Se trabaja en modo consola: usa -Listar, -Aplicar, -Deshacer o -ListarSesiones.'
+    Write-Log -Nivel INFO -Mensaje 'La interfaz gráfica aún no existe (fase 5). Se trabaja en modo consola: usa -Diagnostico, -Listar, -Aplicar, -Deshacer o -ListarSesiones.'
 }
 
 Wait-CierreVentana

@@ -179,8 +179,8 @@ $h = Invoke-Hijo @('-ListarSesiones')
 T '-ListarSesiones: código 0' ($h.Codigo -eq 0)
 $h = Invoke-Hijo @('-Aplicar', 'no-existe', '-SinPreguntar')
 T '-Aplicar con un Id inexistente: código 1 y no aplica nada' ($h.Codigo -eq 1)
-$h = Invoke-Hijo @('-Aplicar', 'recomendados', '-SinPreguntar')
-T '-Aplicar recomendados: código 1 (llega en la fase 4)' ($h.Codigo -eq 1 -and $h.Salida -match 'fase 4')
+# Desde la fase 4, "-Aplicar recomendados" SÍ aplica (usa el diagnóstico real): ya no se prueba aquí con un proceso
+# hijo elevado para no cambiar nada sin querer. Se prueba con funciones de prueba en memoria en Pruebas\Probar-Fase4.ps1.
 $h = Invoke-Hijo @('-Sesion', 'x')
 T '-Sesion sin -Deshacer: código 1' ($h.Codigo -eq 1)
 $h = Invoke-Hijo @('-Deshacer', '-Sesion', 'no-existe', '-SinPreguntar')

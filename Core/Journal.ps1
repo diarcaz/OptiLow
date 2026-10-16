@@ -20,6 +20,10 @@ function Assert-JournalListo {
     )
 
     $e = $global:OptiLow
+    # Bloqueo estricto: con un perfil de hardware simulado (-PerfilSimulado) no se puede aplicar ni deshacer nada.
+    if ($e -and $e.ContainsKey('SimulacionActiva') -and $e.SimulacionActiva) {
+        throw 'Hay un perfil de hardware SIMULADO activo (-PerfilSimulado): solo sirve para ver el diagnóstico. No se puede aplicar ni deshacer nada.'
+    }
     if (-not (Test-EsAdministrador)) {
         throw 'Se necesitan permisos de administrador para aplicar o deshacer cambios (el journal de respaldo es obligatorio). No se aplicará nada.'
     }

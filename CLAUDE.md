@@ -81,7 +81,7 @@ Cada optimización se registra como una definición declarativa con estos campos
 | Reversible | No | Por defecto sí. Falso si el journal no puede deshacerlo |
 | Aplicar | Sí | Bloque que hace el cambio |
 | Comprobar | No | Devuelve aplicado (verdadero), pendiente (falso) o "no aplica" (nulo, p. ej. si el programa no está instalado) |
-| Recomendar | No | Recibe el objeto de hardware y decide si se preselecciona |
+| Recomendar | No | Recibe el objeto de hardware (`param($Hardware)`) y decide si se preselecciona. Devuelve `$true`/`$false` o, mejor, `New-Recomendacion -Si <bool> -Motivo '<por qué>'`: el motivo se muestra al usuario ("GPU antigua detectada: …"). Sin este bloque el tweak nunca se recomienda |
 
 Reglas:
 
@@ -148,7 +148,11 @@ Reglas:
 
 `OptiLow.ps1` acepta parámetros para usarse sin interfaz: listar tweaks y su estado, mostrar diagnóstico, aplicar una lista de IDs (o "recomendados"), y omitir el punto de restauración. Sirve para pruebas y automatización.
 
-Parámetros actuales: `-Listar`, `-ListarSesiones`, `-Aplicar <ids separados por comas>` (hasta la fase 4 solo acepta Ids; "recomendados" necesita el diagnóstico de hardware), `-Deshacer` (por defecto la última sesión no restaurada; con `-Sesion <Id>` otra), `-SinPuntoRestauracion`, `-SinPreguntar`, `-SinElevar`. Códigos de salida: 0 bien, 1 fallos o error, 2 cancelado.
+Parámetros actuales: `-Diagnostico`, `-PerfilSimulado Bajo|Medio|Alto` (solo con `-Diagnostico`), `-Listar`, `-ListarSesiones`, `-Aplicar <ids separados por comas y/o la palabra recomendados>`, `-Deshacer` (por defecto la última sesión no restaurada; con `-Sesion <Id>` otra), `-SinPuntoRestauracion`, `-SinPreguntar`, `-SinElevar`. Códigos de salida: 0 bien, 1 fallos o error, 2 cancelado.
+
+`-Aplicar recomendados` ejecuta el diagnóstico REAL, evalúa el bloque `Recomendar` de cada tweak con ese objeto, **muestra por qué** se recomienda o no cada uno, omite los ya aplicados o que no aplican, y sigue el flujo normal (confirmación, punto de restauración, una sola sesión del journal). Se puede combinar con Ids explícitos.
+
+**`-PerfilSimulado` es solo para ver.** Bloqueo estricto: con un perfil simulado `Assert-JournalListo` rechaza cualquier escritura o deshacer, y la combinación con `-Aplicar` o `-Deshacer` se rechaza antes de pedir elevación.
 
 `-SinPreguntar` usa siempre la opción segura: nunca activa la Protección del sistema por su cuenta y, si el punto de restauración falla (o ya existe uno reciente y Windows omite otro), cancela, salvo que también se pase `-SinPuntoRestauracion`. Las preguntas y la presentación de la consola viven en `Core/Consola.ps1`; la interfaz gráfica usará directamente el motor (`Core/Tweaks.ps1`, `Journal.ps1`, `PuntoRestauracion.ps1`) sin pasar por ese archivo.
 
@@ -167,6 +171,19 @@ Detectar con CIM:
 Perfil calculado: **Bajo** (≤4 GB de RAM, ≤2 hilos, o HDD con ≤8 GB), **Alto** (≥16 GB, ≥8 hilos y SSD) o **Medio**.
 
 Las GPUs antiguas se identifican con patrones de texto en `Config/legacy-gpu-patterns.txt` (editable). Además se detecta "Microsoft Basic Display Adapter" como "sin driver".
+
+**Implementación del diagnóstico (fase 4):**
+
+- Vive en `Modules/Hardware.ps1` y `Modules/Recomendaciones.ps1`; **solo lee** (no escribe nada en el sistema ni en el journal). `Get-Diagnostico` devuelve UN objeto que la interfaz usa tal cual (con `DuracionMs` y la lista `Consultas`).
+- **Tolerante a fallos:** cada consulta va aislada con cronómetro; si falla o se pasa del tiempo queda como Desconocido (`Error` o `TiempoAgotado` en `Consultas`) y el resto sigue. Límite de tiempo con `Get-CimInstance -OperationTimeoutSec` (verificado en Windows PowerShell 5.1: corta una consulta CIM local; `New-CimSession` con timeout NO cortó y no se usa). **Nunca `Win32_Product`.** Se mide y se muestra cuánto tarda el diagnóstico.
+- **Detección de VM:** no solo por fabricante ("Microsoft Corporation" también fabrica las Surface): Hyper-V exige fabricante `Microsoft Corporation` **y** modelo exacto `Virtual Machine`; VMware, VirtualBox, QEMU, Parallels, Xen y nubes por fabricante/modelo; la BIOS solo corrobora. `HypervisorPresent` NO sirve (es verdadero en un host con Hyper-V o VBS). En una VM se muestra un Info y se **suprimen** las alertas de GPU, tipo de disco, ranuras de RAM y salud del disco (los valores virtuales no son fiables).
+- **Tres listas en `Config/`** (texto que contiene, o `re:expresión`; `#` comentarios): `legacy-gpu-patterns.txt` = "GPU antigua" (nivel 1, la ÚNICA que recomienda desactivar la aceleración por hardware: GMA/Express Chipset, "Intel HD Graphics" sin número y 2000/2500/3000/4000, GeForce 6-9/100-300/400-500, ATI y Radeon HD 2000-6000, S3/SiS/VIA/Matrox); `unsupported-gpu-patterns.txt` = drivers sin soporte activo del fabricante (nivel 2: Haswell/Broadwell, Kepler, Radeon HD 7000/8000 y R5-R9; nivel 3 comentado: Intel 6.ª-10.ª gen), **solo Info**, nunca recomienda desactivar la aceleración (una HD 4600 o una GT 730 aceleran bien el navegador); `virtual-gpu-patterns.txt` = adaptadores virtuales o remotos (se excluyen). Los patrones se prueban contra nombres reales en `Pruebas/Probar-Fase4.ps1`, con casos que sí y que NO deben coincidir.
+- **RAM:** capacidad instalada = suma de `Win32_PhysicalMemory.Capacity` (`TotalPhysicalMemory` no es exacta); velocidad = `ConfiguredClockSpeed` (MHz) y, si falta, `Speed` (la documentación dice nanosegundos pero devuelve MHz). Ranuras = `Win32_PhysicalMemoryArray.MemoryDevices` menos los módulos.
+- **Disco del sistema:** letra de la unidad del sistema -> `MSFT_Partition.DiskNumber` -> `MSFT_Disk.UniqueId` -> `MSFT_PhysicalDisk` (respaldo: `DeviceId` igual al número de disco; ese vínculo no está documentado, se observó). `MediaType` 3 = HDD, 4 = SSD, 5 = SCM; si es 0 (Unspecified) se infiere por bus NVMe (17), `SpindleSpeed` (0 = SSD, `0xFFFFFFFF` = rotacional de velocidad desconocida, otro valor = HDD) y modelo. Salud: Warning/Unhealthy = Crítico; Unknown = solo Info.
+- **GPU principal:** la no virtual con salida activa (`CurrentHorizontalResolution`); se listan todas. Alerta de driver viejo (> 3 años): el texto manda revisar la página oficial del fabricante del equipo o de la GPU o Windows Update (Actualizaciones opcionales) y avisa de que **no se usen programas de "actualizar drivers"**.
+- **Administración (`telemetria-servicios-off`):** bloquean la recomendación `PartOfDomain`, `DomainJoined`, `AzureAdJoined` y `EnterpriseJoined` (de `dsregcmd /status`, con límite de tiempo; claves en inglés y valores `YES`/`NO` aunque Windows esté en otro idioma). `WorkplaceJoined` NO bloquea: OptiLow corre elevado (no es fiable) y puede ser un equipo personal con una cuenta del trabajo; solo genera un aviso Info. No se mira la inscripción MDM del registro (falsos positivos). Si no se puede leer `dsregcmd`, por precaución no se recomienda ese tweak y se explica.
+- **Umbrales:** más de 10 programas de inicio habilitados, más de 7 días sin reiniciar (`LastBootUpTime` no se actualiza con el inicio rápido), menos del 15 % de espacio libre. El conteo de programas de inicio descuenta los deshabilitados con `StartupApproved` (la asociación Run <-> `Run`/`Run32`/`StartupFolder` se valida en la VM comparando con el Administrador de tareas).
+- **Perfil:** Bajo si se cumple CUALQUIERA de RAM ≤ 4 GB, ≤ 2 hilos, o HDD con RAM ≤ 8 GB; Alto si se cumplen TODAS (RAM ≥ 16 GB, ≥ 8 hilos y SSD, todas conocidas); Medio el resto. Un dato desconocido no cuenta para Bajo y hace imposible Alto.
 
 Recomendaciones con niveles Crítico, Aviso, Info y Consejo, por ejemplo:
 
