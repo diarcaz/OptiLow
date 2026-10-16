@@ -24,6 +24,8 @@ Idioma: toda la interfaz, los mensajes de log, los comentarios del código y la 
 6. Resto de tweaks, pestaña de programas de inicio y pestaña de respaldo/restauración.
 7. Documentación (`README.md` y `docs/ARQUITECTURA.md`).
 
+**Al empezar una sesión nueva, lee primero `docs/ESTADO.md` (qué fases están terminadas, resultados en la VM, pendientes y cómo se prueba todo) y el plan de la fase en curso (`docs/PLAN-FASE5.md`).** Espera mi orden antes de empezar a escribir código de una fase.
+
 ---
 
 ## Entorno objetivo
@@ -49,7 +51,7 @@ Proyecto_Patata/       Raíz del repositorio
 ├── Config/            Listas editables sin tocar código
 ├── UI/                MainWindow.xaml y su lógica
 ├── Pruebas/           Scripts de autopruebas para VM (el cargador nunca los carga)
-└── docs/              Arquitectura, ideas
+└── docs/              Arquitectura, ideas, ESTADO.md (dónde vamos) y PLAN-FASEn.md (plan de la fase en curso)
 ```
 
 Datos en tiempo de ejecución (logs y respaldos) en `%ProgramData%\OptiLow\`, nunca dentro de la carpeta del programa.
@@ -94,6 +96,16 @@ Reglas:
 - `Aplicar` solo deja salir lo que devuelven las funciones de `Core/` (`Cambiado`, `SinCambios`, `NoAplica`, `Fallido`). `Comprobar` verifica la **configuración**, no el estado en ejecución (cambiar un servicio a Disabled no lo detiene: por eso `telemetria-servicios-off` es `Requiere = Reiniciar`) y devuelve `$true`/`$false`/`$null`; con varios elementos usa `Join-EstadosTweak`.
 - Resultado de un tweak con varios elementos: `Aplicado` si todos los que existen quedaron bien, `NoAplica` solo si no existe ninguno, `Parcial` si alguno falló (p. ej. acceso denegado), `Fallido` si todos fallaron. Una excepción en un bloque se registra y no detiene a los demás tweaks.
 - Cada entrada del journal guarda el `TweakId` del tweak que la generó (permite deshacer un solo tweak más adelante desde la interfaz). Una ejecución de aplicar es **una sola sesión** del journal, aunque incluya varios tweaks. El resumen final avisa de qué tweaks piden reiniciar o cerrar sesión.
+
+### Criterios de Recomendar de los tweaks actuales
+
+| Tweak | Se recomienda cuando | No se recomienda |
+|---|---|---|
+| `efectos-transparencia-off` | perfil Bajo, **GPU antigua (nivel 1)** o GPU sin driver; el motivo lo dice | resto |
+| `telemetria-tareas-off` | el disco del sistema es un HDD fiable, o el perfil es Bajo (esas tareas son las que más cargan un HDD) | SSD y perfil no Bajo |
+| `telemetria-servicios-off` | el equipo NO está administrado (`PartOfDomain`, `DomainJoined`, `AzureAdJoined` y `EnterpriseJoined` falsos) | administrado -> no, con Info y advertencia (Intune/MDM); si `dsregcmd` no da datos -> no, por precaución |
+
+Criterios ya fijados para tweaks futuros: aceleración por hardware (Discord, Chromium) solo con GPU antigua (nivel 1) o sin driver; SysMain solo en HDD; WSearch nunca automático; plan de energía "Alto rendimiento" solo en equipos sin batería; bloatware nunca automático. Si un criterio no está aquí ni en "Datos técnicos verificados", se propone al usuario antes de implementarlo.
 
 ---
 
@@ -143,6 +155,7 @@ Reglas:
   - Si se intenta cerrar la ventana con un trabajo en curso, pedir confirmación.
 - Los controles con nombre se obtienen a partir de sus `x:Name` del XAML; el estado compartido en una sola variable global, no en variables sueltas.
 - Opción para forzar renderizado por software (útil con drivers de video rotos), ya que WPF también usa la GPU.
+- **El plan aprobado de la fase 5 (decisiones y ajustes del usuario) está en `docs/PLAN-FASE5.md`; manda sobre estas viñetas generales.** Resumen: la consola de PowerShell va oculta en modo interfaz (`-MostrarConsola` para depurar) y los errores de arranque se muestran sin depender de WPF; pantalla de "Cargando…" lo antes posible; funciona en 1366x768 con escala del 100, 125 y 150 %; sin sombras, desenfoques ni animaciones; renderizado por software con preferencia guardada, reintento automático y lanzador "Iniciar (modo seguro).cmd"; el selector de perfil simulado solo existe con `-Demo` y es solo para ver; banner visible si el escritorio es de otro usuario; navegación completa con teclado; la pestaña de Respaldo es mínima (listar y deshacer la última) y Programas de inicio es un marcador hasta la fase 6.
 
 ### Modo consola
 
@@ -215,6 +228,8 @@ Recomendaciones con niveles Crítico, Aviso, Info y Consejo, por ejemplo:
 ### Criterio para recomendar desactivar la aceleración por hardware
 Solo con GPU antigua o sin driver. **No** recomendarla automáticamente solo por tener poca RAM o CPU débil: en CPUs de 2 núcleos, desactivarla pasa la decodificación de video a la CPU y puede empeorar YouTube.
 
+**Niveles de GPU y por qué (decidido con el usuario):** "GPU antigua" NO significa "sin soporte del fabricante". Una HD 4600 o una GT 730 sin drivers nuevos aceleran bien el navegador y el video, y desactivarles la aceleración en un CPU débil empeora el rendimiento. Por eso: **nivel 1** (`Config/legacy-gpu-patterns.txt`) = "GPU antigua", la ÚNICA lista que recomienda desactivar la aceleración; **nivel 2** (`Config/unsupported-gpu-patterns.txt`) = "drivers sin soporte activo del fabricante", solo Info y nunca recomienda desactivarla; **nivel 3** (comentado en el mismo archivo del nivel 2: Intel 6.ª-10.ª generación) no se muestra salvo que se descomente. Los patrones se prueban en `Pruebas/Probar-Fase4.ps1` con nombres reales de `Win32_VideoController`, incluidos los que NO deben coincidir (GTX 750 Ti, GTX 960, GTX 1660, RTX 3060, RX 580, UHD 620, Iris Xe, Radeon Vega 8, "AMD Radeon(TM) Graphics").
+
 ### Efectos visuales
 - Transparencias: `EnableTransparency = 0` en `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`.
 - "Mejor rendimiento": preferir la configuración personalizada (`VisualFXSetting = 3`) que apaga animaciones y sombras **pero conserva el suavizado de fuentes**. Requiere cerrar sesión.
@@ -266,6 +281,38 @@ Solo con GPU antigua o sin driver. **No** recomendarla automáticamente solo por
 - Probar en Windows PowerShell 5.1 y, si es posible, en Windows 10 y en Windows 11.
 - Probar sin Discord instalado y sin Chrome o Brave: el estado debe ser "no aplica", sin errores.
 - Comprobar que todo parsea sin errores de sintaxis antes de dar una fase por terminada.
+- Scripts de `Pruebas/` (el cargador nunca los carga): `Probar-Fase2.ps1`, `Probar-Fase3.ps1` (VM, administrador, piden confirmar y crean y borran objetos ficticios o aplican de verdad), `Probar-Fase4.ps1` (solo lectura, sin administrador), `Probar-Core-SinAdmin.ps1` y `Probar-Motor-SinAdmin.ps1` (sin administrador; se niegan a correr elevados) y `Diagnostico-PuntoRestauracion.ps1`. Cada fase se da por cerrada cuando su script pasa en la VM con 0 fallos.
+
+---
+
+## Notas de desarrollo y trampas de PowerShell 5.1 (aprendidas probando)
+
+Flujo: una fase cada vez; plan primero y aprobación antes de escribir código; al terminar, resumen y espera; commit por fase (y por cada corrección tras la VM); se sube a GitHub solo cuando el usuario lo pide. Los datos técnicos dudosos se verifican en Microsoft Learn y se informa del resultado antes de usarlos. Los resultados de la VM se anotan en `docs/ESTADO.md`.
+
+**Codificación:** las herramientas de edición escriben `.ps1` SIN BOM. Después de editar o crear scripts, volver a escribirlos con BOM y comprobar el parseo:
+
+```
+$enc = New-Object Text.UTF8Encoding($true)
+Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object { [IO.File]::WriteAllText($_.FullName, [IO.File]::ReadAllText($_.FullName), $enc) }
+```
+
+Trampas encontradas (todas dieron fallos reales):
+
+- `0 -eq ''` es **verdadero**: un 0 es un dato válido (0 días encendido, 0 ranuras libres). Comparar con `$null` y con `$Valor -is [string] -and $Valor.Length -eq 0`.
+- Una lista o arreglo **vacío es "falso"** en un `if`: usar `$null -ne $lista`, no `if ($lista)` (la lista de consultas del diagnóstico nunca se llenaba).
+- `"$variable:texto"` se interpreta como unidad o ámbito: escribir `${variable}:texto`.
+- `[System.IO.File]::Replace(a, b, $null)` falla porque PowerShell pasa una cadena vacía: usar `[NullString]::Value`.
+- `ConvertTo-Json` sin `-Depth` usa 2 y aplasta los objetos anidados. Siempre `-Depth 100`.
+- `Start-Process -Verb RunAs` pierde el `Win32Exception` (código 1223 = UAC cancelado): usar `[Process]::Start` con `UseShellExecute` y recorrer la cadena de `InnerException` (PowerShell la envuelve en `MethodInvocationException`).
+- Programas nativos: no usar `2>&1` en 5.1; para capturar salida y errores por separado, `Process` con `RedirectStandardOutput/Error`, y para comandos que escriben en stderr, `cmd /c "... >nul 2>nul"`.
+- `Sort-Object` no es estable en 5.1: ordenar por (clave, índice original).
+- Un literal numérico como argumento de comando conserva su texto (`0.0` queda "0.0"): en pruebas, usar `[double]0`.
+- `Invoke-WmiMethod -ArgumentList` sigue el orden de parámetros que devuelve WMI (`Description`, `EventType`, `RestorePointType`), no el de la documentación.
+- Variables de prueba con el mismo nombre que un contador (`$ok` pisó a `$script:ok`) y parámetros/variables que solo difieren en mayúsculas (`$Ids` y `$ids` son la misma): cuidado.
+- `Win32_PhysicalMemory.Speed` dice nanosegundos en la documentación pero devuelve MHz; usar `ConfiguredClockSpeed`. `TotalPhysicalMemory` no es exacta: sumar `Capacity`. `HypervisorPresent` es verdadero en un host con Hyper-V o VBS.
+- `New-CimSession -OperationTimeoutSec` no cortó una consulta lenta; `Get-CimInstance -OperationTimeoutSec` sí (verificado). Para programas nativos, `Process` con `WaitForExit(timeout)` y `Kill`.
+- El cargador promueve a global también las funciones **redefinidas** al recargar un archivo (necesario para sustituirlas en pruebas con funciones de prueba).
+- Los arneses que sustituyen `Assert-JournalListo` o `Get-Diagnostico` deben restaurar las funciones reales al terminar (`Import-OptiLowArchivo` del archivo original).
 
 ---
 
