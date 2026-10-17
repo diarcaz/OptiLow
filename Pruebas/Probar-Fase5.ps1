@@ -164,7 +164,7 @@ $global:PruebaRespuestas = New-Object System.Collections.Queue
 function global:Show-DialogoOptiLow {
     param([string]$Titulo, [string]$Mensaje, [string[]]$Detalles = @(), [string]$Advertencia = '', [string[]]$Botones = @('Aceptar'),
         [int]$Predeterminado = 0, [int]$Cancelar = -1, [string]$Tipo = 'Info')
-    [void]$global:PruebaDialogos.Add([pscustomobject]@{ Titulo = $Titulo; Mensaje = $Mensaje; Detalles = $Detalles; Advertencia = $Advertencia; Botones = $Botones; Tipo = $Tipo })
+    [void]$global:PruebaDialogos.Add([pscustomobject]@{ Titulo = $Titulo; Mensaje = $Mensaje; Detalles = $Detalles; Advertencia = $Advertencia; Botones = $Botones; Tipo = $Tipo; Predeterminado = $Predeterminado; Cancelar = $Cancelar })
     if ($global:PruebaRespuestas.Count -gt 0) { return [int]$global:PruebaRespuestas.Dequeue() }
     if ($Cancelar -ge 0) { return $Cancelar }
     return $Predeterminado
@@ -550,7 +550,13 @@ $global:OptiLowScriptsTrabajo['apuntar-backups'] = "param(`$Dir) `$global:OptiLo
 $ui.SesionesCargadas = $false
 Update-SesionesUI
 [void](Esperar-Libre 30000)
-T '10: la lista de sesiones muestra la sesión del journal' (($c.PanelSesiones.Children.Count -ge 1) -and ($c.TxtRespaldoInfo.Text -match '1 sesión'))
+T '10: la lista de sesiones muestra la sesión del journal' (($c.PanelSesiones.Children.Count -ge 1) -and ($c.TxtRespaldoInfo.Text -match '1 ejecución'))
+# Fase 6a: tarjeta comprensible (fecha local, estado en palabras de usuario, Id solo en el tooltip)
+$tarjeta = $c.PanelSesiones.Children[0]
+$textoTarjeta = (@($tarjeta.Child.Children | ForEach-Object { if ($_ -is [System.Windows.Controls.TextBlock]) { $_.Text + ' ' + (@($_.Inlines | ForEach-Object { $_.Text }) -join '') } }) -join ' | ')
+T '10: la tarjeta dice «Se puede deshacer» (no «Activo») y no muestra el Id' (($textoTarjeta -match 'Se puede deshacer') -and ($textoTarjeta -notmatch 'Activo') -and ($textoTarjeta -notmatch '20260101-000000000-1'))
+T '10: la tarjeta muestra la fecha en formato local, no ISO' (($textoTarjeta -notmatch '2026-01-01T') -and ($textoTarjeta -match '2026') -and ($textoTarjeta -notmatch ':00:00'))
+T '10: el Id de la sesión está en el tooltip de la tarjeta' ([string]$tarjeta.ToolTip -match '20260101-000000000-1')
 Reset-Dialogos
 $global:PruebaRespuestas.Enqueue(1)   # Deshacer
 Invoke-DeshacerUI
@@ -558,6 +564,31 @@ Invoke-DeshacerUI
 T '10: deshacer pide confirmación con el Id de la sesión' (($global:PruebaDialogos.Count -ge 1) -and ($global:PruebaDialogos[0].Titulo -like 'Deshacer*') -and (($global:PruebaDialogos[0].Detalles -join ' ') -match '20260101-000000000-1'))
 T '10: tras deshacer se muestra el resultado' (@($global:PruebaDialogos | Where-Object { $_.Titulo -like 'Sesión deshecha*' -or $_.Titulo -like 'Restauración parcial*' -or $_.Titulo -like 'Error al deshacer*' }).Count -ge 1)
 Info ("Diálogos mostrados al deshacer: " + (($global:PruebaDialogos | ForEach-Object { $_.Titulo }) -join ' | '))
+
+# Fase 6a: deshacer UNA optimización desde su fila, con aviso de conflicto con una sesión posterior
+$jsonX = Join-Path $tmp 'x6a.json'
+[System.IO.File]::WriteAllText($jsonX, '{"k":2}', (New-Object System.Text.UTF8Encoding($false)))
+function Nueva-EntradaJson($Indice, $Tweak, $Orig, $Nuevo) { @{ Indice = $Indice; Hora = '2026-01-02T00:00:00'; Estado = 'Aplicada'; TweakId = $Tweak; Tipo = 'Json'; Descripcion = "JSON x6a.json : k"; Ruta = $jsonX; Clave = @('k'); ClaveExistia = $true; ValorOriginal = $Orig; IntermediosCreados = @(); ValorNuevo = $Nuevo; CopiaEmergencia = 'no-importa' } }
+$sx = @{ Version = 1; Id = '20260102-000000000-1'; Inicio = '2026-01-02T00:00:00'; Estado = 'Activo'; Entradas = @(Nueva-EntradaJson 1 'prueba-x' 0 1) }
+$sy = @{ Version = 1; Id = '20260103-000000000-1'; Inicio = '2026-01-03T00:00:00'; Estado = 'Activo'; Entradas = @(Nueva-EntradaJson 1 'prueba-y' 1 2) }
+foreach ($sf in @($sx, $sy)) { [System.IO.File]::WriteAllText((Join-Path $dirBk ($sf.Id + '.json')), (ConvertTo-Json -InputObject $sf -Depth 100), (New-Object System.Text.UTF8Encoding($false))) }
+Reset-Dialogos
+$global:PruebaRespuestas.Enqueue(1)   # confirmar «Deshacer»
+$global:PruebaRespuestas.Enqueue(0)   # en el aviso de conflicto: Cancelar
+Invoke-DeshacerTweakUI -Id 'prueba-x'
+[void](Esperar-Libre 60000); [void](Esperar-Libre 60000)
+$titulos = @($global:PruebaDialogos | ForEach-Object { $_.Titulo })
+T '6a: deshacer una optimización pide confirmación y luego avisa del conflicto con la sesión posterior' (($titulos -contains 'Deshacer una optimización') -and ($titulos -contains 'Deshacer podría borrar otros cambios'))
+$dlgAviso = $global:PruebaDialogos | Where-Object { $_.Titulo -eq 'Deshacer podría borrar otros cambios' } | Select-Object -First 1
+T '6a: el aviso nombra la optimización posterior y el botón predeterminado es Cancelar' ($dlgAviso -and (($dlgAviso.Detalles -join ' ') -match 'prueba-y') -and ($dlgAviso.Predeterminado -eq 0))
+T '6a: al cancelar el aviso NO se tocó nada (k sigue en 2)' ((([System.IO.File]::ReadAllText($jsonX) | ConvertFrom-Json).k) -eq 2)
+Reset-Dialogos
+$global:PruebaRespuestas.Enqueue(1)   # confirmar «Deshacer»
+$global:PruebaRespuestas.Enqueue(1)   # en el aviso: «Deshacer de todos modos»
+Invoke-DeshacerTweakUI -Id 'prueba-x'
+[void](Esperar-Libre 60000); [void](Esperar-Libre 60000)
+$titulos = @($global:PruebaDialogos | ForEach-Object { $_.Titulo })
+T '6a: tras confirmar explícitamente se deshace y se muestra el resultado' (($titulos -contains 'Optimización deshecha') -and ((([System.IO.File]::ReadAllText($jsonX) | ConvertFrom-Json).k) -eq 0))
 
 Seccion '11. Teclado'
 $c.Navegacion.SelectedIndex = 0
@@ -720,8 +751,20 @@ $c.Navegacion.SelectedIndex = 0
 
 # Ayuda para deshacer
 T 'Optimizaciones: texto visible que explica que se deshace desde «Respaldo y restauración»' (($c.TxtAyudaDeshacer.Text -match 'Respaldo y restauración') -and ($c.TxtAyudaDeshacer.Text -match 'Deshacer última sesión'))
-Update-EstadosFilasUI -Estados @([pscustomobject]@{ Id = $idA; Estado = 'Aplicado'; Detalle = '' })
-T 'Una fila "Aplicado" explica en su tooltip dónde se deshace' ($ui.Filas[$idA].Check.ToolTip -match 'Respaldo y restauración')
+Update-EstadosFilasUI -Estados @([pscustomobject]@{ Id = $idA; Estado = 'Aplicado'; Detalle = ''; Deshacible = $true })
+T 'Una fila "Aplicado" con respaldo muestra el botón «Deshacer» y su tooltip lo explica' (($ui.Filas[$idA].BtnDeshacer.Visibility -eq 'Visible') -and ($ui.Filas[$idA].Check.ToolTip -match 'Deshacer'))
+Update-EstadosFilasUI -Estados @([pscustomobject]@{ Id = $idA; Estado = 'Aplicado'; Detalle = ''; Deshacible = $false })
+T 'Una fila "Aplicado" sin respaldo de OptiLow no muestra el botón y lo explica en su tooltip' (($ui.Filas[$idA].BtnDeshacer.Visibility -eq 'Collapsed') -and ($ui.Filas[$idA].Check.ToolTip -match 'no hay un respaldo'))
+Update-EstadosFilasUI -Estados @([pscustomobject]@{ Id = $idA; Estado = 'Pendiente'; Detalle = ''; Deshacible = $true })
+T 'Una fila pendiente nunca muestra «Deshacer»' ($ui.Filas[$idA].BtnDeshacer.Visibility -eq 'Collapsed')
+# Una fila aplicada y recomendada no debe sonar a "falta aplicarla"
+$ui.Filas[$idA].Recomendado = $true; $ui.Filas[$idA].Motivo = 'motivo de prueba'
+Update-EstadosFilasUI -Estados @([pscustomobject]@{ Id = $idA; Estado = 'Aplicado'; Detalle = ''; Deshacible = $true })
+T 'Aplicada + recomendada dice «Aplicada (recomendada para este equipo…)»' ($ui.Filas[$idA].TxtRec.Text -match '^Aplicada \(recomendada para este equipo')
+Update-EstadosFilasUI -Estados @([pscustomobject]@{ Id = $idA; Estado = 'Pendiente'; Detalle = ''; Deshacible = $false })
+T 'Pendiente + recomendada sigue diciendo «Recomendada para este equipo»' ($ui.Filas[$idA].TxtRec.Text -match '^Recomendada para este equipo')
+$ui.Filas[$idA].Recomendado = $false; $ui.Filas[$idA].Motivo = ''
+Update-EstadosFilasUI -Estados @([pscustomobject]@{ Id = $idA; Estado = 'Aplicado'; Detalle = ''; Deshacible = $true })
 Set-EstadosFijos
 
 # Tooltips de los botones desactivados

@@ -22,3 +22,5 @@ No se implementan hasta que se aprueben.
 - (Fase 5) Buscador o filtro por riesgo en la lista de optimizaciones cuando haya muchos tweaks (fase 6), y mostrar la descripción dentro de la fila.
 - (Fase 5) Poder cancelar un trabajo largo (hoy no se cancela a la mitad; cerrar la ventana avisa de que lo aplicado queda en el journal).
 - (Fase 5) `Core/` se lee dos veces (hilo de la interfaz y runspace de trabajo); si en un HDD se nota, cargar el runspace solo cuando haga falta o compartir la carga.
+- (Fase 6a) La detección de conflictos de `Undo-JournalTweak` no se aplica a `Undo-JournalSesion -Id <antigua>`: deshacer una sesión antigua entera también podría borrar cambios de sesiones posteriores no deshechas. La "última sesión" no tiene ese problema por construcción.
+- (Fase 6a) Parámetro de consola para deshacer una sola optimización (`-DeshacerOptimizacion <id>`), con la misma confirmación de conflictos; hoy solo existe en la interfaz y como función de `Core/`.

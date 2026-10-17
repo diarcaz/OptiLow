@@ -123,6 +123,7 @@ Criterios ya fijados para tweaks futuros: aceleración por hardware (Discord, Ch
 - Las entradas que ya se revirtieron en el momento (p. ej. el ajuste temporal de la frecuencia de puntos de restauración) se marcan `Restaurada`; el deshacer las omite y lo explica en el log.
 - El archivo se guarda después de cada entrada, no al final, para sobrevivir a un cierre inesperado.
 - "Deshacer última sesión" recorre las entradas en orden inverso y luego marca el archivo como restaurado para no repetirlo.
+- **Deshacer una sola optimización (fase 6a):** `Undo-JournalTweak -TweakId` usa el `TweakId` de cada entrada. Antes de restaurar comprueba si una sesión posterior sin deshacer (u otra optimización posterior de la misma sesión) tocó lo mismo y si el valor actual ya no es el que dejamos; en ese caso **no deshace sin confirmación explícita** (`-Forzar`), porque restaurar el original borraría ese cambio posterior. La sesión solo pasa a `Restaurado` cuando no queda ningún cambio por revertir.
 - La restauración no se registra a sí misma en un journal nuevo.
 - Si alguna entrada falla al restaurar, el archivo se marca como **restauración parcial** e indica qué entradas fallaron (no como restaurado completo), y el resto de entradas se siguen procesando.
 

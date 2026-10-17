@@ -37,7 +37,7 @@ $global:OptiLowFuncionesCore = @(
     'Initialize-OptiLowLog', 'Write-Log'
     'Test-EsAdministrador', 'Invoke-RelanzarComoAdministrador', 'Test-EsCancelacionUAC', 'Test-EscritorioDeOtroUsuario', 'Enter-InstanciaUnica', 'Show-YaAbierto'
     'Test-AclRespaldos', 'Initialize-CarpetaRespaldos'
-    'Assert-JournalListo', 'Start-JournalSesion', 'Add-JournalEntrada', 'Get-JournalSesiones', 'Undo-JournalSesion'
+    'Assert-JournalListo', 'Start-JournalSesion', 'Add-JournalEntrada', 'Get-JournalSesiones', 'Undo-JournalSesion', 'Undo-JournalTweak', 'Get-JournalTweakAnalisis', 'Get-JournalTweaksDeshacibles'
     'Get-RegistroEstado', 'Set-RegistroValor', 'Remove-RegistroValor', 'Restore-RegistroEntrada'
     'Write-ArchivoTexto', 'Get-JsonValor', 'Set-JsonValor', 'Restore-ArchivoEntrada', 'Restore-JsonEntrada'
     'Get-ServicioEstado', 'Set-ServicioInicio', 'Restore-ServicioEntrada'

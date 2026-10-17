@@ -296,7 +296,7 @@
                         </WrapPanel>
                         <TextBlock x:Name="TxtSeleccion" Text="" Foreground="{StaticResource BrushTextoSuave}" TextWrapping="Wrap"/>
                         <TextBlock x:Name="TxtAyudaDeshacer" Foreground="{StaticResource BrushInfo}" TextWrapping="Wrap" Margin="0,2,0,0"
-                                   Text="Para deshacer lo aplicado: pestaña «Respaldo y restauración» > «Deshacer última sesión»."
+                                   Text="Para deshacer una optimización aplicada, pulsa «Deshacer» en su fila. Para deshacer todo lo de la última ejecución: pestaña «Respaldo y restauración» > «Deshacer última sesión»."
                                    />
                     </StackPanel>
                     <ScrollViewer Grid.Row="1" x:Name="ScrollOptimizaciones" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" TabIndex="24">

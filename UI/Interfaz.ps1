@@ -410,6 +410,13 @@ function Update-EstadoBotonesUI {
     Set-AyudaControlUI -Control $c.BtnDeshacer -Razon $razonAplicar
     $razonSes = $razonOcupado; if (-not $razonSes) { $razonSes = $sinJournal }
     Set-AyudaControlUI -Control $c.BtnActualizarSesiones -Razon $razonSes
+    # Botón «Deshacer» de cada fila: mismas razones que «Aplicar» (ocupado, sin administrador, sin journal, simulado)
+    foreach ($id in @($ui.Filas.Keys)) {
+        $b = $ui.Filas[$id].BtnDeshacer
+        if (-not $b) { continue }
+        Set-AyudaControlUI -Control $b -Razon $razonAplicar
+        if (-not $razonAplicar) { $b.ToolTip = 'Deshacer esta optimización (restaura los valores originales guardados en el journal).' }
+    }
     Update-SeleccionUI
 }
 
@@ -515,6 +522,17 @@ function New-FilaOptimizacionUI {
     $linea = New-Object System.Windows.Controls.DockPanel
     $linea.LastChildFill = $true
 
+    # Botón «Deshacer» (solo visible en las filas aplicadas que OptiLow puede revertir con el journal)
+    $btnDeshacer = New-Object System.Windows.Controls.Button
+    $btnDeshacer.Content = 'Deshacer'
+    $btnDeshacer.Tag = $Def.Id
+    $btnDeshacer.Padding = (New-EspesorUI '10,1')
+    $btnDeshacer.Margin = (New-EspesorUI '12,0,0,0')
+    $btnDeshacer.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $btnDeshacer.Visibility = 'Collapsed'
+    [System.Windows.Controls.DockPanel]::SetDock($btnDeshacer, [System.Windows.Controls.Dock]::Right)
+    [void]$linea.Children.Add($btnDeshacer)
+
     # Etiquetas a la derecha (se agregan primero para que ocupen su sitio; la casilla toma el resto)
     $estado = New-TextoUI -Texto 'Comprobando…' -Color 'BrushTextoSuave' -Margen '12,0,0,0' -SinAjuste
     $estado.MinWidth = 84
@@ -554,8 +572,9 @@ function New-FilaOptimizacionUI {
     $marco.Child = $pila
     $marco.Tag = $Def.Id
 
-    $fila = @{ Id = $Def.Id; Def = $Def; Marco = $marco; Check = $check; TxtEstado = $estado; TxtRec = $rec; Estado = 'Comprobando'; Recomendado = $false; Motivo = '' }
+    $fila = @{ Id = $Def.Id; Def = $Def; Marco = $marco; Check = $check; TxtEstado = $estado; TxtRec = $rec; BtnDeshacer = $btnDeshacer; Deshacible = $false; Estado = 'Comprobando'; Recomendado = $false; Motivo = '' }
 
+    $btnDeshacer.Add_Click({ param($s, $e) Invoke-ManejadorUI { Invoke-DeshacerTweakUI -Id $s.Tag } })
     $check.Add_Click({ param($s, $e) Invoke-ManejadorUI { Invoke-ClicCasillaUI -Id $s.Tag } })
     $check.Add_GotKeyboardFocus({ param($s, $e) Invoke-ManejadorUI { Show-DetalleOptimizacionUI -Id $s.Tag } })
     $marco.Add_MouseLeftButtonUp({ param($s, $e) Invoke-ManejadorUI { Show-DetalleOptimizacionUI -Id $s.Tag } })
@@ -617,14 +636,27 @@ function Update-FilaUI {
     $seleccionable = Test-FilaSeleccionableUI -Fila $Fila
     if ($seleccionable) { $Fila.Marco.Opacity = 1.0 } else { $Fila.Marco.Opacity = 0.6 }
     if ((-not $seleccionable) -and $Fila.Check.IsChecked) { $Fila.Check.IsChecked = $false }
-    if ($Fila.Estado -eq 'Aplicado') { $Fila.Check.ToolTip = 'Ya está aplicada. Se deshace desde «Respaldo y restauración» > «Deshacer última sesión».' }
+    $puedeDeshacer = (($Fila.Estado -eq 'Aplicado') -and $Fila.Deshacible)
+    if ($puedeDeshacer) { $Fila.BtnDeshacer.Visibility = 'Visible' } else { $Fila.BtnDeshacer.Visibility = 'Collapsed' }
+    if ($Fila.Estado -eq 'Aplicado') {
+        if ($Fila.Deshacible) { $Fila.Check.ToolTip = 'Ya está aplicada. Pulsa «Deshacer» en esta fila para revertirla.' }
+        else { $Fila.Check.ToolTip = 'Ya está aplicada, pero no hay un respaldo de OptiLow para deshacerla (estaba así antes o se aplicó fuera de OptiLow).' }
+    }
     elseif ($Fila.Estado -eq 'NoAplica') { $Fila.Check.ToolTip = 'No aplica en este equipo.' }
     elseif ($Fila.Estado -eq 'Comprobando') { $Fila.Check.ToolTip = 'Comprobando el estado…' }
     else { $Fila.Check.ToolTip = $Fila.Def.Nombre }
 
     if ($Fila.Recomendado) {
-        $txt = 'Recomendada para este equipo'
-        if ($Fila.Motivo) { $txt += ': ' + $Fila.Motivo }
+        # Una fila ya aplicada no debe sonar a "falta aplicarla"
+        if ($Fila.Estado -eq 'Aplicado') {
+            $txt = 'Aplicada (recomendada para este equipo'
+            if ($Fila.Motivo) { $txt += ': ' + $Fila.Motivo }
+            $txt += ')'
+        }
+        else {
+            $txt = 'Recomendada para este equipo'
+            if ($Fila.Motivo) { $txt += ': ' + $Fila.Motivo }
+        }
         $Fila.TxtRec.Text = $txt
         $Fila.TxtRec.Visibility = 'Visible'
     }
@@ -654,6 +686,7 @@ function Update-EstadosFilasUI {
         $ui.Estados[$e.Id] = $e
         $fila = $ui.Filas[$e.Id]
         $fila.Estado = $e.Estado
+        $fila.Deshacible = [bool]$e.Deshacible
         if ($e.Detalle) { $fila.DetalleEstado = $e.Detalle }
         Update-FilaUI -Fila $fila
     }
@@ -946,7 +979,7 @@ function Invoke-TrasAplicarUI {
         }
         $titulo = 'Resumen'; $tipo = 'Info'
         if ($malos -gt 0) { $titulo = 'Resumen: hubo fallos'; $tipo = 'Peligro' } elseif ($aviso) { $tipo = 'Aviso' }
-        $msg = 'Resultado de cada optimización. Para REVERTIRLAS: ve a la pestaña «Respaldo y restauración» y pulsa «Deshacer última sesión» (deshace todo lo de esta ejecución; todavía no se puede deshacer una sola desde su fila).'
+        $msg = 'Resultado de cada optimización. Para REVERTIR una, pulsa «Deshacer» en su fila de Optimizaciones. Para revertir todo lo de esta ejecución: pestaña «Respaldo y restauración» > «Deshacer última sesión».'
         [void](Show-DialogoOptiLow -Titulo $titulo -Mensaje $msg -Detalles @($lineas) -Advertencia $aviso -Tipo $tipo -Botones @('Cerrar'))
     }
     Update-EstadosAsincronoUI
@@ -1220,6 +1253,50 @@ function Invoke-DiagnosticoUI {
 # Respaldo y restauración (mínimo en la fase 5: listar y deshacer la última sesión)
 # ---------------------------------------------------------------------------------------------------------------
 
+function Format-FechaLocalUI {
+    # Auxiliar interna: fecha y hora del journal (ISO) en formato local, p. ej. «17/10/2026, 2:44».
+    param(
+        [AllowNull()][AllowEmptyString()][string]$Texto
+    )
+    try {
+        $f = [datetime]::ParseExact($Texto, 's', [System.Globalization.CultureInfo]::InvariantCulture)
+        $cultura = [System.Globalization.CultureInfo]::CurrentCulture
+        return ($f.ToString('d', $cultura) + ', ' + $f.ToString('t', $cultura))
+    }
+    catch { return [string]$Texto }
+}
+
+function Get-NombreOptimizacionUI {
+    # Auxiliar interna: nombre legible de una optimización (su Id si ya no está registrada).
+    param(
+        [AllowNull()][AllowEmptyString()][string]$Id
+    )
+    if (-not $Id) { return 'Cambio sin optimización asociada' }
+    $def = Get-Tweak -Id $Id | Select-Object -First 1
+    if ($def) { return [string]$def.Nombre }
+    return $Id
+}
+
+function Get-EstadoSesionUI {
+    # Auxiliar interna: estado de una sesión en palabras de usuario (texto, color y explicación).
+    param(
+        [Parameter(Mandatory)]$Sesion
+    )
+    $cambios = [int]$Sesion.Cambios
+    $hechos = [int]$Sesion.CambiosDeshechos
+    $total = $(if ($cambios -gt 0) { "$cambios cambio(s)" } else { "$([int]$Sesion.Entradas) entrada(s) del journal" })
+    if ($Sesion.Estado -eq 'Restaurado') {
+        return @{ Texto = 'Deshecha'; Color = 'BrushTextoSuave'; Detalle = "Se revirtieron todos los cambios de esta ejecución ($total)." }
+    }
+    if ($Sesion.Estado -eq 'RestauradoParcial') {
+        return @{ Texto = 'Deshecha parcialmente'; Color = 'BrushAviso'; Detalle = 'Algunos cambios no se pudieron revertir (mira el registro). Puedes reintentarlo con «Deshacer última sesión».' }
+    }
+    if (($hechos -gt 0) -and ($hechos -lt $cambios)) {
+        return @{ Texto = 'Deshecha parcialmente'; Color = 'BrushAviso'; Detalle = "Ya se deshicieron $hechos de $cambios cambio(s); el resto se puede deshacer." }
+    }
+    return @{ Texto = 'Se puede deshacer'; Color = 'BrushTexto'; Detalle = "$total." }
+}
+
 function Update-SesionesUI {
     <#
     .SYNOPSIS
@@ -1248,7 +1325,7 @@ function Update-SesionesUI {
                 return
             }
             $pendientes = @($sesiones | Where-Object { ($_.Estado -ne 'Restaurado') -and ($_.Entradas -gt 0) }).Count
-            $c.TxtRespaldoInfo.Text = "$($sesiones.Count) sesión(es); $pendientes pendiente(s) de deshacer. «Deshacer última sesión» revierte la más reciente que no esté restaurada."
+            $c.TxtRespaldoInfo.Text = "$($sesiones.Count) ejecución(es) guardadas; $pendientes con cambios que se pueden deshacer. «Deshacer última sesión» revierte la más reciente que se pueda deshacer; para una sola optimización usa «Deshacer» en su fila de Optimizaciones."
             foreach ($s in $sesiones) {
                 $marco = New-Object System.Windows.Controls.Border
                 $marco.Background = Get-PincelUI -Clave 'BrushPanel'
@@ -1256,11 +1333,18 @@ function Update-SesionesUI {
                 $marco.BorderThickness = (New-EspesorUI '1')
                 $marco.Padding = (New-EspesorUI '10,6')
                 $marco.Margin = (New-EspesorUI '0,0,0,6')
+                $marco.ToolTip = "Id de la sesión: $($s.Id)"
                 $pila = New-Object System.Windows.Controls.StackPanel
-                $clave = switch ($s.Estado) { 'Restaurado' { 'BrushTextoSuave' } 'RestauradoParcial' { 'BrushAviso' } default { 'BrushTexto' } }
-                [void]$pila.Children.Add((New-TextoUI -Texto ('{0}  ·  iniciada {1}  ·  {2}  ·  {3} entrada(s)' -f $s.Id, $s.Inicio, $s.Estado, $s.Entradas) -Color $clave -Negrita))
-                $tw = 'sin optimizaciones registradas'; if (@($s.Tweaks).Count -gt 0) { $tw = @($s.Tweaks) -join ', ' }
-                [void]$pila.Children.Add((New-TextoUI -Texto ('Optimizaciones: ' + $tw) -Color 'BrushTextoSuave' -Tam 13))
+                $est = Get-EstadoSesionUI -Sesion $s
+                [void]$pila.Children.Add((New-TextoUI -Texto ('{0}  ·  {1}' -f (Format-FechaLocalUI -Texto $s.Inicio), $est.Texto) -Color $est.Color -Negrita))
+                [void]$pila.Children.Add((New-TextoUI -Texto $est.Detalle -Color 'BrushTextoSuave' -Tam 13))
+                foreach ($d in @($s.Detalle)) {
+                    if (-not $d) { continue }
+                    $linea = '• {0}: {1} cambio(s)' -f (Get-NombreOptimizacionUI -Id $d.TweakId), $d.Cambios
+                    if ([int]$d.Deshechos -ge [int]$d.Cambios -and [int]$d.Cambios -gt 0) { $linea += ' (deshecha)' }
+                    elseif ([int]$d.Deshechos -gt 0) { $linea += " ($($d.Deshechos) ya deshecho(s))" }
+                    [void]$pila.Children.Add((New-TextoUI -Texto $linea -Color 'BrushTexto' -Tam 13 -Margen '8,2,0,0'))
+                }
                 $marco.Child = $pila
                 [void]$c.PanelSesiones.Children.Add($marco)
             }
@@ -1306,6 +1390,86 @@ function Invoke-DeshacerUI {
                     Invoke-TrasDeshacerUI -Resultado $res2
                 })
         })
+}
+
+function Invoke-DeshacerTweakUI {
+    <#
+    .SYNOPSIS
+        Botón «Deshacer» de la fila de una optimización: confirmación, trabajo «deshacer-tweak» y, si el motor
+        avisa de conflictos con cambios posteriores o de valores modificados, segunda confirmación explícita
+        (nunca se fuerza sin ella).
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Id
+    )
+
+    $ui = $global:OptiLowUI
+    if ($ui.Trabajo) { return }
+    $motivo = Get-MotivoNoAplicarUI
+    if ($motivo) {
+        [void](Show-DialogoOptiLow -Titulo 'No se puede deshacer' -Mensaje $motivo -Tipo Aviso -Botones @('Entendido'))
+        return
+    }
+    $nombre = Get-NombreOptimizacionUI -Id $Id
+    $def = Get-Tweak -Id $Id | Select-Object -First 1
+    $det = @('Se restauran los valores originales que OptiLow guardó antes de aplicarla. No se tocan las demás optimizaciones.')
+    if ($def -and $def.Requiere -and ($def.Requiere -ne 'Nada')) { $det += "Al revertirla tendrás que $(if ($def.Requiere -eq 'Reiniciar') { 'reiniciar el equipo' } else { 'cerrar sesión' }) para que el cambio surta efecto del todo." }
+    $r = Show-DialogoOptiLow -Titulo 'Deshacer una optimización' -Mensaje "¿Deshacer «$nombre»?" -Detalles $det -Botones @('Cancelar', 'Deshacer') -Predeterminado 0 -Cancelar 0 -Tipo Aviso
+    if ($r -ne 1) { Write-Log -Mensaje "Deshacer '$Id' cancelado por el usuario."; return }
+    # El manejador se ejecuta después, en otro ámbito: se cierra sobre $Id y $nombre
+    $alTerminar = {
+        param($res)
+        Invoke-TrasDeshacerTweakUI -Resultado $res -Id $Id -Nombre $nombre
+    }.GetNewClosure()
+    [void](Start-TrabajoUI -Nombre 'deshacer-tweak' -Texto "deshaciendo «$nombre»" -Parametros @{ TweakId = $Id; Forzar = $false } -AlTerminar $alTerminar)
+}
+
+function Invoke-TrasDeshacerTweakUI {
+    # Auxiliar interna: resultado de deshacer una optimización. Con RequiereConfirmacion pregunta y repite con -Forzar.
+    param(
+        [Parameter(Mandatory)]$Resultado,
+        [Parameter(Mandatory)][string]$Id,
+        [Parameter(Mandatory)][string]$Nombre,
+        [switch]$Forzado
+    )
+
+    $ui = $global:OptiLowUI
+    $refrescar = $true
+    if ($Resultado.Error) {
+        [void](Show-DialogoOptiLow -Titulo 'Error al deshacer' -Mensaje $Resultado.Error -Tipo Peligro -Botones @('Cerrar'))
+    }
+    else {
+        $r = Get-ResultadoUnicoUI -Resultado $Resultado
+        if ((-not $r) -or ($r.Estado -eq 'NadaQueDeshacer')) {
+            [void](Show-DialogoOptiLow -Titulo 'Nada que deshacer' -Mensaje "No hay cambios de «$Nombre» pendientes de deshacer en el journal." -Botones @('Cerrar'))
+        }
+        elseif ($r.Estado -eq 'RequiereConfirmacion') {
+            $avisos = @(@($r.Conflictos) + @($r.Divergencias) | ForEach-Object { $_.Texto })
+            $resp = Show-DialogoOptiLow -Titulo 'Deshacer podría borrar otros cambios' -Mensaje "«$Nombre» no se ha deshecho todavía. Antes de continuar, ten en cuenta esto:" -Detalles $avisos `
+                -Advertencia 'Si continúas, se restaurará el valor original y se perderá el cambio posterior. Si dudas, cancela y deshaz primero la sesión más reciente desde «Respaldo y restauración».' `
+                -Botones @('Cancelar', 'Deshacer de todos modos') -Predeterminado 0 -Cancelar 0 -Tipo Peligro
+            if ($resp -eq 1) {
+                $refrescar = $false
+                $alTerminar2 = {
+                    param($res2)
+                    Invoke-TrasDeshacerTweakUI -Resultado $res2 -Id $Id -Nombre $Nombre -Forzado
+                }.GetNewClosure()
+                [void](Start-TrabajoUI -Nombre 'deshacer-tweak' -Texto "deshaciendo «$Nombre» (confirmado)" -Parametros @{ TweakId = $Id; Forzar = $true } -AlTerminar $alTerminar2)
+            }
+            else { Write-Log -Mensaje "Deshacer '$Id' cancelado por el usuario tras el aviso de conflictos." }
+        }
+        elseif ($r.Estado -eq 'RestauradoParcial') {
+            $det = @($r.Fallidas | ForEach-Object { '{0} ({1}): {2}' -f $_.Descripcion, $_.Tipo, $_.Error })
+            [void](Show-DialogoOptiLow -Titulo 'Deshecha parcialmente' -Mensaje "Se restauraron $($r.Restauradas) cambio(s) de «$Nombre», pero estos fallaron (puedes reintentarlo):" -Detalles $det -Tipo Peligro -Botones @('Cerrar'))
+        }
+        else {
+            [void](Show-DialogoOptiLow -Titulo 'Optimización deshecha' -Mensaje "«$Nombre» se deshizo: $($r.Restauradas) cambio(s) restaurados." -Botones @('Cerrar'))
+        }
+    }
+    if ($refrescar) {
+        $ui.SesionesCargadas = $false
+        Update-EstadosAsincronoUI -Despues { Update-SesionesUI }
+    }
 }
 
 function Invoke-TrasDeshacerUI {

@@ -29,7 +29,15 @@ $r = Import-OptiLowExtras -Raiz $Raiz
 '@
 
     estados = @'
-foreach ($t in @(Get-Tweak)) { Get-TweakEstado -Id $t.Id }
+# Optimizaciones con cambios del journal pendientes de deshacer (para el botón «Deshacer» de su fila)
+$deshacibles = @{}
+try { if ($global:OptiLow.DirRespaldos) { $deshacibles = Get-JournalTweaksDeshacibles } }
+catch { Write-Log -Nivel WARN -Mensaje "No se pudo leer el journal para saber qué se puede deshacer: $($_.Exception.Message)" }
+foreach ($t in @(Get-Tweak)) {
+    $est = Get-TweakEstado -Id $t.Id
+    Add-Member -InputObject $est -NotePropertyName 'Deshacible' -NotePropertyValue ([bool]$deshacibles.ContainsKey($t.Id)) -Force
+    $est
+}
 '@
 
     diagnostico = @'
@@ -78,6 +86,12 @@ Get-JournalSesiones
     deshacer = @'
 param($Id)
 Undo-JournalSesion -Id $Id
+'@
+
+    'deshacer-tweak' = @'
+param($TweakId, $Forzar)
+if ($Forzar) { Undo-JournalTweak -TweakId $TweakId -Forzar }
+else { Undo-JournalTweak -TweakId $TweakId }
 '@
 
     # Trabajo de prueba (sin efectos): sirve para comprobar que la interfaz no se congela

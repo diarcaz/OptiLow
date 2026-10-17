@@ -202,6 +202,10 @@ function Get-JournalSesiones {
                     Estado   = $datos.Estado
                     Entradas = @($datos.Entradas).Count
                     Tweaks   = @(@($datos.Entradas) | ForEach-Object { $_.TweakId } | Where-Object { $_ } | Select-Object -Unique)
+                    # Cambios reales (los de optimizaciones, sin notas) y cuántos ya se deshicieron uno a uno
+                    Cambios          = @(@($datos.Entradas) | Where-Object { $_.TweakId -and ($_.Tipo -ne 'Nota') }).Count
+                    CambiosDeshechos = @(@($datos.Entradas) | Where-Object { $_.TweakId -and ($_.Tipo -ne 'Nota') -and ($_.Restaurada -eq $true) }).Count
+                    Detalle          = @(Get-JournalResumenTweaks -Entradas @($datos.Entradas))
                     Ruta     = $archivo.FullName
                 })
         }
@@ -262,7 +266,7 @@ function Undo-JournalSesion {
     $entradas = @($datos.Entradas)
     $yaRevertidas = @($entradas | Where-Object { $_.Restaurada -eq $true }).Count
     if ($yaRevertidas -gt 0) {
-        Write-Log -Mensaje "Deshaciendo la sesión $($datos.Id): $($entradas.Count) entradas, de las cuales $yaRevertidas ya estaban revertidas (por ejemplo, el ajuste temporal de la frecuencia de puntos de restauración, que se revierte en el momento) y se omiten."
+        Write-Log -Mensaje "Deshaciendo la sesión $($datos.Id): $($entradas.Count) entradas, de las cuales $yaRevertidas ya estaban revertidas (por ejemplo, deshechas una a una desde su fila o el ajuste temporal de la frecuencia de puntos de restauración, que se revierte en el momento) y se omiten."
     }
     else {
         Write-Log -Mensaje "Deshaciendo la sesión $($datos.Id) ($($entradas.Count) entradas)..."
@@ -277,16 +281,7 @@ function Undo-JournalSesion {
             continue
         }
         try {
-            switch ($entrada.Tipo) {
-                'Registro'    { Restore-RegistroEntrada -Entrada $entrada }
-                'Servicio'    { Restore-ServicioEntrada -Entrada $entrada }
-                'Tarea'       { Restore-TareaEntrada -Entrada $entrada }
-                'Archivo'     { Restore-ArchivoEntrada -Entrada $entrada }
-                'Json'        { Restore-JsonEntrada -Entrada $entrada }
-                'PlanEnergia' { Restore-PlanEnergiaEntrada -Entrada $entrada }
-                'Nota'        { Write-Log -Mensaje "Nota (no reversible): $($entrada.Descripcion)" }
-                default       { throw "Tipo de entrada desconocido: '$($entrada.Tipo)'." }
-            }
+            Restore-JournalEntrada -Entrada $entrada
             Add-Member -InputObject $entrada -NotePropertyName 'Restaurada' -NotePropertyValue $true -Force
             $restauradas++
         }
@@ -329,4 +324,340 @@ function Undo-JournalSesion {
         Write-Log -Nivel WARN -Mensaje "Restauración PARCIAL de la sesión $($datos.Id): $restauradas restauradas, $($fallidas.Count) fallidas."
     }
     return [pscustomobject]@{ Estado = $datos.Estado; Restauradas = $restauradas; Fallidas = @($fallidas) }
+}
+
+function Get-JournalResumenTweaks {
+    # Auxiliar interna: por cada optimización de una lista de entradas, cuántos cambios hizo y cuántos ya se deshicieron.
+    param(
+        [object[]]$Entradas
+    )
+    $res = New-Object System.Collections.ArrayList
+    $ids = @(@($Entradas) | ForEach-Object { $_.TweakId } | Where-Object { $_ } | Select-Object -Unique)
+    foreach ($id in $ids) {
+        $propias = @(@($Entradas) | Where-Object { ($_.TweakId -eq $id) -and ($_.Tipo -ne 'Nota') })
+        [void]$res.Add([pscustomobject]@{
+                TweakId   = $id
+                Cambios   = $propias.Count
+                Deshechos = @($propias | Where-Object { $_.Restaurada -eq $true }).Count
+            })
+    }
+    return @($res)
+}
+
+function Restore-JournalEntrada {
+    # Auxiliar interna: restaura UNA entrada según su tipo. Lanza una excepción si falla. No escribe en el journal.
+    param(
+        [Parameter(Mandatory)]$Entrada
+    )
+    switch ($Entrada.Tipo) {
+        'Registro'    { Restore-RegistroEntrada -Entrada $Entrada }
+        'Servicio'    { Restore-ServicioEntrada -Entrada $Entrada }
+        'Tarea'       { Restore-TareaEntrada -Entrada $Entrada }
+        'Archivo'     { Restore-ArchivoEntrada -Entrada $Entrada }
+        'Json'        { Restore-JsonEntrada -Entrada $Entrada }
+        'PlanEnergia' { Restore-PlanEnergiaEntrada -Entrada $Entrada }
+        'Nota'        { Write-Log -Mensaje "Nota (no reversible): $($Entrada.Descripcion)" }
+        default       { throw "Tipo de entrada desconocido: '$($Entrada.Tipo)'." }
+    }
+}
+
+# ---------------------------------------------------------------------------------------------
+# Deshacer UNA optimización (TweakId) con detección de conflictos
+# ---------------------------------------------------------------------------------------------
+
+function Get-JournalEntradaObjetivo {
+    # Auxiliar interna: qué elemento del sistema toca una entrada (para saber si dos entradas chocan).
+    # Devuelve Clave (texto en minúsculas) y Archivo (ruta en minúsculas si toca un archivo), o $null si no toca nada.
+    param(
+        [Parameter(Mandatory)]$Entrada
+    )
+    switch ($Entrada.Tipo) {
+        'Registro'    { return [pscustomobject]@{ Clave = ('reg|' + ([string]$Entrada.Ruta).TrimEnd('\').ToLowerInvariant() + '|' + ([string]$Entrada.Nombre).ToLowerInvariant()); Archivo = $null } }
+        'Servicio'    { return [pscustomobject]@{ Clave = ('svc|' + ([string]$Entrada.Nombre).ToLowerInvariant()); Archivo = $null } }
+        'Tarea'       { return [pscustomobject]@{ Clave = ('tarea|' + ([string]$Entrada.Ruta).TrimEnd('\').ToLowerInvariant() + '\' + ([string]$Entrada.Nombre).ToLowerInvariant()); Archivo = $null } }
+        'PlanEnergia' { return [pscustomobject]@{ Clave = 'energia|planactivo'; Archivo = $null } }
+        'Archivo'     { return [pscustomobject]@{ Clave = ('archivo|' + ([string]$Entrada.Ruta).ToLowerInvariant()); Archivo = ([string]$Entrada.Ruta).ToLowerInvariant() } }
+        'Json'        { return [pscustomobject]@{ Clave = ('json|' + ([string]$Entrada.Ruta).ToLowerInvariant() + '|' + ((@($Entrada.Clave) | ForEach-Object { ([string]$_).ToLowerInvariant() }) -join '/')); Archivo = ([string]$Entrada.Ruta).ToLowerInvariant() } }
+        default       { return $null }
+    }
+}
+
+function Test-JournalObjetivosChocan {
+    # Auxiliar interna: dos entradas chocan si tocan lo mismo; un archivo entero choca con cualquier clave JSON de ese archivo.
+    param(
+        [Parameter(Mandatory)]$A,
+        [Parameter(Mandatory)]$B
+    )
+    if ($A.Clave -ceq $B.Clave) { return $true }
+    if ($A.Archivo -and $B.Archivo -and ($A.Archivo -ceq $B.Archivo)) {
+        # Un archivo entero choca con cualquier clave JSON de él; dos claves JSON distintas no chocan
+        if ($A.Clave.StartsWith('archivo|') -or $B.Clave.StartsWith('archivo|')) { return $true }
+    }
+    return $false
+}
+
+function Get-JournalNombreTweak {
+    # Auxiliar interna: nombre legible de una optimización (o su Id si ya no está registrada).
+    param(
+        [AllowNull()][AllowEmptyString()][string]$TweakId
+    )
+    if (-not $TweakId) { return 'un cambio sin optimización asociada' }
+    $def = $null
+    if (Get-Command Get-Tweak -ErrorAction SilentlyContinue) { $def = Get-Tweak -Id $TweakId | Select-Object -First 1 }
+    if ($def) { return [string]$def.Nombre }
+    return $TweakId
+}
+
+function Read-JournalSesionArchivo {
+    # Auxiliar interna: lee un archivo de sesión tras verificar sus permisos.
+    param(
+        [Parameter(Mandatory)][string]$Ruta
+    )
+    $verif = Test-AclRespaldos -Ruta $Ruta -Archivo
+    if (-not $verif.Valido) {
+        throw "El journal '$Ruta' no tiene los permisos esperados y no es de fiar: $($verif.Motivos -join ' ') No se restaurará nada."
+    }
+    return ([System.IO.File]::ReadAllText($Ruta, [System.Text.Encoding]::UTF8) | ConvertFrom-Json)
+}
+
+function Test-EntradaPendienteDeshacer {
+    # Auxiliar interna: una entrada con cambio real que aún no se revirtió.
+    param(
+        [Parameter(Mandatory)]$Entrada
+    )
+    return (($Entrada.Restaurada -ne $true) -and ($Entrada.Tipo -ne 'Nota'))
+}
+
+function Get-JournalTweaksDeshacibles {
+    <#
+    .SYNOPSIS
+        Optimizaciones que tienen cambios del journal pendientes de deshacer.
+    .OUTPUTS
+        Tabla hash: TweakId -> objeto con Sesiones (Ids) y Cambios pendientes.
+    #>
+    $tabla = @{}
+    foreach ($s in @(Get-JournalSesiones)) {
+        if ($s.Estado -eq 'Restaurado') { continue }
+        try { $datos = Read-JournalSesionArchivo -Ruta $s.Ruta } catch { continue }
+        foreach ($en in @($datos.Entradas)) {
+            if ((-not $en.TweakId) -or (-not (Test-EntradaPendienteDeshacer -Entrada $en))) { continue }
+            if (-not $tabla.ContainsKey($en.TweakId)) {
+                $tabla[$en.TweakId] = [pscustomobject]@{ Sesiones = (New-Object System.Collections.ArrayList); Cambios = 0 }
+            }
+            if ($tabla[$en.TweakId].Sesiones -notcontains $datos.Id) { [void]$tabla[$en.TweakId].Sesiones.Add($datos.Id) }
+            $tabla[$en.TweakId].Cambios++
+        }
+    }
+    return $tabla
+}
+
+function Test-JournalEntradaConservaNuevo {
+    # Auxiliar interna: ¿el sistema sigue como lo dejamos nosotros? $true / $false / $null (no se puede saber).
+    param(
+        [Parameter(Mandatory)]$Entrada
+    )
+    if ($Entrada.Estado -eq 'Fallida') { return $null }
+    try {
+        switch ($Entrada.Tipo) {
+            'Registro' {
+                $act = Get-RegistroEstado -Ruta $Entrada.Ruta -Nombre ([string]$Entrada.Nombre)
+                if ($Entrada.Accion -eq 'Eliminar') { return (-not $act.ValorExiste) }
+                if ((-not $act.ValorExiste) -or ($act.Tipo -ne $Entrada.TipoNuevo)) { return $false }
+                $nuevo = ConvertFrom-RegistroDatoJson -Tipo $Entrada.TipoNuevo -Dato $Entrada.DatoNuevo
+                return [bool](Test-RegistroDatoIgual -Tipo $Entrada.TipoNuevo -A $act.Dato -B $nuevo)
+            }
+            'Servicio' {
+                $act = Get-ServicioEstado -Nombre ([string]$Entrada.Nombre)
+                return [bool]($act.Existe -and ($act.Inicio -eq $Entrada.InicioNuevo))
+            }
+            'Tarea' {
+                $act = Get-TareaEstado -Ruta ([string]$Entrada.Ruta) -Nombre ([string]$Entrada.Nombre)
+                return [bool]($act.Existe -and (-not $act.Habilitada))
+            }
+            'PlanEnergia' {
+                return ((Get-PlanEnergiaActivo).Guid -eq $Entrada.GuidNuevo)
+            }
+            'Archivo' {
+                if (-not $Entrada.HashNuevo) { return $null }
+                if (-not (Test-Path -LiteralPath $Entrada.Ruta -PathType Leaf)) { return $false }
+                return ((Get-FileHash -LiteralPath $Entrada.Ruta -Algorithm SHA256).Hash -eq $Entrada.HashNuevo)
+            }
+            'Json' {
+                $act = Get-JsonValor -Ruta ([string]$Entrada.Ruta) -Clave ([string[]]@($Entrada.Clave))
+                if ((-not $act.ArchivoExiste) -or (-not $act.ClaveExiste)) { return $false }
+                $a = ConvertTo-Json -InputObject $act.Valor -Depth 100 -Compress
+                $b = ConvertTo-Json -InputObject $Entrada.ValorNuevo -Depth 100 -Compress
+                return ($a -ceq $b)
+            }
+            default { return $null }
+        }
+    }
+    catch {
+        Write-Log -Nivel DEBUG -Mensaje "No se pudo comprobar si '$($Entrada.Descripcion)' sigue como lo dejamos: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Get-JournalTweakAnalisis {
+    <#
+    .SYNOPSIS
+        Qué pasaría al deshacer una optimización: cambios que revertir, conflictos con cambios posteriores y
+        valores que ya no son los que dejamos. Solo lee.
+    .OUTPUTS
+        Sesiones (Ids, de más reciente a más antigua), Pendientes (cambios a revertir), Conflictos y Divergencias
+        (cada uno con un Texto en español).
+    #>
+    param(
+        [Parameter(Mandatory)][string]$TweakId
+    )
+
+    $todas = @(Get-JournalSesiones | Where-Object { $_.Estado -ne 'Restaurado' })   # más reciente primero
+    $datosPorId = @{}
+    foreach ($s in $todas) { $datosPorId[$s.Id] = Read-JournalSesionArchivo -Ruta $s.Ruta }
+
+    $conflictos = New-Object System.Collections.ArrayList
+    $divergencias = New-Object System.Collections.ArrayList
+    $sesiones = New-Object System.Collections.ArrayList
+    $pendientes = 0
+    $nombre = Get-JournalNombreTweak -TweakId $TweakId
+
+    foreach ($s in $todas) {
+        $datos = $datosPorId[$s.Id]
+        $propias = @(@($datos.Entradas) | Where-Object { ($_.TweakId -eq $TweakId) -and (Test-EntradaPendienteDeshacer -Entrada $_) })
+        if ($propias.Count -eq 0) { continue }
+        [void]$sesiones.Add($datos.Id)
+        $pendientes += $propias.Count
+
+        foreach ($mia in $propias) {
+            $obj = Get-JournalEntradaObjetivo -Entrada $mia
+            if (-not $obj) { continue }
+            $conflictosAntes = $conflictos.Count
+
+            # Entradas posteriores (misma sesión con índice mayor, o sesiones más recientes) de OTRA optimización, sin revertir
+            foreach ($t in $todas) {
+                if ([string]::CompareOrdinal([string]$t.Id, [string]$datos.Id) -lt 0) { continue }   # los Id empiezan por la fecha: orden de texto
+                foreach ($otra in @($datosPorId[$t.Id].Entradas)) {
+                    if (-not (Test-EntradaPendienteDeshacer -Entrada $otra)) { continue }
+                    if ($otra.TweakId -eq $TweakId) { continue }
+                    if (($t.Id -eq $datos.Id) -and ([int]$otra.Indice -le [int]$mia.Indice)) { continue }
+                    $objOtra = Get-JournalEntradaObjetivo -Entrada $otra
+                    if ((-not $objOtra) -or (-not (Test-JournalObjetivosChocan -A $obj -B $objOtra))) { continue }
+                    $quien = Get-JournalNombreTweak -TweakId $otra.TweakId
+                    [void]$conflictos.Add([pscustomobject]@{
+                            TweakId         = $TweakId
+                            Entrada         = $mia.Descripcion
+                            OtraSesion      = $t.Id
+                            OtraInicio      = $datosPorId[$t.Id].Inicio
+                            OtroTweakId     = $otra.TweakId
+                            OtraDescripcion = $otra.Descripcion
+                            Texto           = "«$($mia.Descripcion)» fue modificado después por «$quien» (sesión del $($datosPorId[$t.Id].Inicio)) y ese cambio no está deshecho: restaurar el valor original de «$nombre» borraría ese cambio posterior."
+                        })
+                }
+            }
+
+            # Si ya hay un conflicto con esta entrada, el aviso de "valor distinto" sería repetir lo mismo
+            $conserva = $null
+            if ($conflictos.Count -eq $conflictosAntes) { $conserva = Test-JournalEntradaConservaNuevo -Entrada $mia }
+            if ($conserva -eq $false) {
+                [void]$divergencias.Add([pscustomobject]@{
+                        TweakId = $TweakId
+                        Entrada = $mia.Descripcion
+                        Texto   = "«$($mia.Descripcion)» ya no tiene el valor que dejó «$nombre» (alguien lo cambió después): restaurar el original lo sobrescribiría."
+                    })
+            }
+        }
+    }
+    return [pscustomobject]@{
+        TweakId      = $TweakId
+        Sesiones     = @($sesiones)
+        Pendientes   = $pendientes
+        Conflictos   = @($conflictos)
+        Divergencias = @($divergencias)
+    }
+}
+
+function Undo-JournalTweak {
+    <#
+    .SYNOPSIS
+        Deshace los cambios de UNA optimización (su TweakId) en el journal, sin tocar las demás.
+    .DESCRIPTION
+        Antes de deshacer comprueba (1) si una sesión posterior sin deshacer, u otra optimización posterior de
+        la misma sesión, modificó lo mismo, y (2) si el valor actual ya no es el que dejamos nosotros. Si hay
+        algo de eso NO deshace y devuelve Estado = 'RequiereConfirmacion' con la lista; para continuar hay que
+        repetir la llamada con -Forzar tras la confirmación explícita del usuario. Revierte en orden inverso,
+        de la sesión más reciente a la más antigua. Cada entrada revertida se marca Restaurada; la sesión pasa a
+        Restaurado solo cuando ya no queda ningún cambio por revertir. No se registra a sí misma en el journal.
+    .PARAMETER TweakId
+        Id de la optimización.
+    .PARAMETER Forzar
+        Continúa aunque haya conflictos o valores cambiados (tras la confirmación del usuario).
+    .OUTPUTS
+        Estado (Restaurado, RestauradoParcial, RequiereConfirmacion, NadaQueDeshacer), Restauradas, Fallidas,
+        Conflictos y Divergencias.
+    .EXAMPLE
+        Undo-JournalTweak -TweakId 'efectos-transparencia-off'
+    #>
+    param(
+        [Parameter(Mandatory)][string]$TweakId,
+        [switch]$Forzar
+    )
+
+    Assert-JournalListo -Completo
+    $e = $global:OptiLow
+
+    $analisis = Get-JournalTweakAnalisis -TweakId $TweakId
+    if ($analisis.Pendientes -eq 0) {
+        Write-Log -Nivel INFO -Mensaje "Deshacer '$TweakId': no hay cambios pendientes de deshacer en el journal."
+        return [pscustomobject]@{ Estado = 'NadaQueDeshacer'; Restauradas = 0; Fallidas = @(); Conflictos = @(); Divergencias = @() }
+    }
+    $hayAvisos = (@($analisis.Conflictos).Count -gt 0) -or (@($analisis.Divergencias).Count -gt 0)
+    if ($hayAvisos -and (-not $Forzar)) {
+        foreach ($c in (@($analisis.Conflictos) + @($analisis.Divergencias))) { Write-Log -Nivel WARN -Mensaje "Deshacer '$TweakId': $($c.Texto)" }
+        Write-Log -Nivel WARN -Mensaje "Deshacer '$TweakId': NO se deshizo nada; hace falta confirmación explícita."
+        return [pscustomobject]@{ Estado = 'RequiereConfirmacion'; Restauradas = 0; Fallidas = @(); Conflictos = @($analisis.Conflictos); Divergencias = @($analisis.Divergencias) }
+    }
+    if ($hayAvisos) { Write-Log -Nivel WARN -Mensaje "Deshacer '$TweakId': el usuario confirmó continuar a pesar de los avisos." }
+
+    $fallidas = New-Object System.Collections.ArrayList
+    $restauradas = 0
+    foreach ($idSesion in @($analisis.Sesiones)) {
+        $sesion = Get-JournalSesiones | Where-Object { $_.Id -eq $idSesion } | Select-Object -First 1
+        if (-not $sesion) { continue }
+        $datos = Read-JournalSesionArchivo -Ruta $sesion.Ruta
+        $entradas = @($datos.Entradas)
+        Write-Log -Mensaje "Deshaciendo '$TweakId' en la sesión $($datos.Id)..."
+        for ($i = $entradas.Count - 1; $i -ge 0; $i--) {
+            $entrada = $entradas[$i]
+            if (($entrada.TweakId -ne $TweakId) -or ($entrada.Restaurada -eq $true)) { continue }
+            try {
+                Restore-JournalEntrada -Entrada $entrada
+                Add-Member -InputObject $entrada -NotePropertyName 'Restaurada' -NotePropertyValue $true -Force
+                $restauradas++
+            }
+            catch {
+                Write-Log -Nivel ERROR -Mensaje "No se pudo restaurar la entrada $($entrada.Indice) ($($entrada.Tipo): $($entrada.Descripcion)): $($_.Exception.Message)"
+                [void]$fallidas.Add([pscustomobject]@{ Indice = $entrada.Indice; Tipo = $entrada.Tipo; Descripcion = $entrada.Descripcion; Error = $_.Exception.Message })
+            }
+            Write-JournalJson -Ruta $sesion.Ruta -Objeto $datos
+        }
+        # La sesión queda Restaurada solo si ya no queda ningún cambio por revertir (las notas no se pueden revertir)
+        $quedan = @($entradas | Where-Object { Test-EntradaPendienteDeshacer -Entrada $_ })
+        if ($quedan.Count -eq 0) {
+            $datos.Estado = 'Restaurado'
+            Add-Member -InputObject $datos -NotePropertyName 'FinRestauracion' -NotePropertyValue ((Get-Date).ToString('s')) -Force
+            Write-JournalJson -Ruta $sesion.Ruta -Objeto $datos
+        }
+        # El journal en memoria de esta sesión quedó desfasado: la siguiente escritura empieza una sesión nueva.
+        if ($e.Journal -and ($e.Journal.Id -eq $datos.Id)) { $e.Journal = $null }
+    }
+
+    if ($fallidas.Count -eq 0) {
+        Write-Log -Nivel OK -Mensaje "Optimización '$TweakId' deshecha ($restauradas cambio(s) restaurados)."
+        $estado = 'Restaurado'
+    }
+    else {
+        Write-Log -Nivel WARN -Mensaje "Deshacer '$TweakId' PARCIAL: $restauradas restaurados, $($fallidas.Count) fallidos (se puede reintentar)."
+        $estado = 'RestauradoParcial'
+    }
+    return [pscustomobject]@{ Estado = $estado; Restauradas = $restauradas; Fallidas = @($fallidas); Conflictos = @(); Divergencias = @() }
 }
