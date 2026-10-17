@@ -97,6 +97,7 @@ function Start-OptiLowInterfaz {
         try {
             $ventana = New-OptiLowVentana
             $ventana.Add_ContentRendered({ $global:OptiLowUI.PrimerDibujo = $true })
+            $ventana.Add_Closed({ $global:OptiLowUI.Cerrada = $true })
             $ventana.Show()
         }
         catch {
@@ -107,6 +108,7 @@ function Start-OptiLowInterfaz {
             $ui.ModoRender = 'Software (reintento automático)'
             $ventana = New-OptiLowVentana
             $ventana.Add_ContentRendered({ $global:OptiLowUI.PrimerDibujo = $true })
+            $ventana.Add_Closed({ $global:OptiLowUI.Cerrada = $true })
             $ventana.Show()
         }
         Set-TiempoUI -Etapa 'Ventana creada'
@@ -160,6 +162,7 @@ function Start-OptiLowInterfaz {
         # 7. Contenido de la ventana y fin del "Cargando…"
         Set-TextoCargaUI -Texto 'Preparando la ventana…'
         Initialize-ContenidoUI
+        Set-TiempoUI -Etapa 'Contenido preparado'
         $ui.C.PanelCarga.Visibility = 'Collapsed'
         Invoke-BombearUI
         Invoke-BombearUI
@@ -174,6 +177,13 @@ function Start-OptiLowInterfaz {
         Start-TrabajosIniciales
     }
     catch {
+        # Cerrar la ventana en cualquier momento (incluso mientras carga) no es un error: se sale en silencio
+        if (($_.Exception.Message -eq 'OPTILOW-VENTANA-CERRADA') -or $ui.Cerrada) {
+            try { Write-Log -Mensaje 'La ventana se cerró mientras se cargaba: se sale sin error.' } catch { }
+            try { Stop-TrabajosUI } catch { }
+            if (Get-Command -Name 'Write-SenalApertura' -ErrorAction SilentlyContinue) { Write-SenalApertura }
+            return 0
+        }
         $msg = "No se pudo iniciar la interfaz: $($_.Exception.Message)"
         try { if ($ventana) { $ventana.Close() } } catch { }
         Show-ErrorSinWpf -Mensaje $msg
@@ -183,11 +193,16 @@ function Start-OptiLowInterfaz {
     # Las pruebas automáticas manejan el dispatcher ellas mismas
     if ($SinBucle) { return 0 }
 
+    # Si la ventana se cerró justo antes de empezar el bucle, no hay nada que ejecutar
+    $dis = [System.Windows.Threading.Dispatcher]::CurrentDispatcher
+    if ($ui.Cerrada -or $dis.HasShutdownStarted -or $dis.HasShutdownFinished) { try { Stop-TrabajosUI } catch { }; return 0 }
+
     # 9. Bucle de la ventana hasta que se cierre (el evento Closed llama a InvokeShutdown)
     try {
         [System.Windows.Threading.Dispatcher]::Run()
     }
     catch {
+        if ($ui.Cerrada -or $dis.HasShutdownStarted -or $dis.HasShutdownFinished) { return 0 }
         Show-ErrorSinWpf -Mensaje "La interfaz se cerró por un error: $($_.Exception.Message)"
         return 1
     }

@@ -23,6 +23,8 @@
     Interno: con -SoloArranque, fuerza el renderizado por software.
 .PARAMETER SimularFalloVentana
     Interno: con -SoloArranque, hace fallar la primera creación de la ventana (prueba el reintento en software).
+.PARAMETER CerrarEn
+    Interno: con -SoloArranque, cierra la ventana en cuanto se anota esa etapa de arranque (cierre a mitad de la carga).
 .PARAMETER ProbarInstancia
     Interno: intenta tomar el mutex de instancia única con ese nombre, imprime PRIMERA=True/False y sale.
 .PARAMETER SimularErrorArranque
@@ -33,7 +35,8 @@ param(
     [switch]$Software,
     [switch]$SimularFalloVentana,
     [switch]$SimularErrorArranque,
-    [string]$ProbarInstancia
+    [string]$ProbarInstancia,
+    [string]$CerrarEn
 )
 
 $ErrorActionPreference = 'Stop'
@@ -88,9 +91,21 @@ if ($SoloArranque) {
             & $global:PruebaOriginalVentana
         }
     }
+    if ($CerrarEn) {
+        Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+        $global:PruebaEtapaCierre = $CerrarEn
+        $tmCierre = New-Object System.Windows.Threading.DispatcherTimer
+        $tmCierre.Interval = [TimeSpan]::FromMilliseconds(10)
+        $tmCierre.Add_Tick({
+                param($s, $e)
+                $u = $global:OptiLowUI
+                if ($u -and $u.C.VentanaPrincipal -and $u.Tiempos.Contains($global:PruebaEtapaCierre)) { $s.Stop(); $u.C.VentanaPrincipal.Close() }
+            })
+        $tmCierre.Start()
+    }
     $codigo = @(Start-OptiLowInterfaz -Raiz $raiz -Opciones @{ Demo = $false; SinElevar = $false; RenderizadoSoftware = [bool]$Software } -SinBucle)[-1]
     $ui = $global:OptiLowUI
-    Write-Output "RESULTADO: codigo=$codigo modo=[$($ui.ModoRender)] intentos=$($global:PruebaIntentos) errores=$($global:PruebaErrores.Count) modoProceso=$(try { [System.Windows.Media.RenderOptions]::ProcessRenderMode } catch { 'n/d' })"
+    Write-Output "RESULTADO: cerrada=$($ui.Cerrada) codigo=$codigo modo=[$($ui.ModoRender)] intentos=$($global:PruebaIntentos) errores=$($global:PruebaErrores.Count) modoProceso=$(try { [System.Windows.Media.RenderOptions]::ProcessRenderMode } catch { 'n/d' })"
     foreach ($par in $ui.Tiempos.GetEnumerator()) { Write-Output ('TIEMPO: {0} = {1} ms' -f $par.Key, $par.Value) }
     if ($global:PruebaErrores.Count -gt 0) { Write-Output ('ERROR-MOSTRADO: ' + $global:PruebaErrores[0]) }
     try { Stop-TrabajosUI } catch { }
@@ -830,10 +845,15 @@ foreach ($par in @(@('normal', $normal), @('software', $soft))) {
     $dib = @($par[1] | Where-Object { $_ -like 'TIEMPO: Primer dibujo*' }) | Select-Object -First 1
     Info ("  {0,-9} {1} | {2} | {3}" -f $par[0], $wpf, $dib, $ult)
 }
-T 'Proceso normal: arranca y devuelve 0 en modo Automático' (($normal -join "`n") -match 'RESULTADO: codigo=0 modo=\[Automático\]')
+T 'Proceso normal: arranca y devuelve 0 en modo Automático' (($normal -join "`n") -match 'RESULTADO: cerrada=False codigo=0 modo=\[Automático\]')
 T 'Proceso -Software: modo "Software (forzado por parámetro)" y ProcessRenderMode = SoftwareOnly' ((($soft -join "`n") -match 'modo=\[Software \(forzado por parámetro\)\]') -and (($soft -join "`n") -match 'modoProceso=SoftwareOnly'))
 T 'Reintento automático: tras un fallo de la ventana abre en software y avisa' ((($reint -join "`n") -match 'codigo=0 modo=\[Software \(reintento automático\)\] intentos=2') -and (($reint -join "`n") -match 'modoProceso=SoftwareOnly'))
 T 'Error de arranque: devuelve 1 y llama al aviso sin WPF con el motivo' ((($errArr -join "`n") -match 'codigo=1') -and (($errArr -join "`n") -match 'ERROR-MOSTRADO: .*No se pudo iniciar la interfaz.*Fallo simulado'))
+foreach ($etapa in @('Ventana creada', 'Core/ cargado', 'Modules/ y Tweaks/ cargados', 'Contenido preparado')) {
+    $hc = Invoke-Hijo -Extra @('-CerrarEn', $etapa)
+    $tc = $hc -join ' '
+    T "Cerrar la ventana a mitad de la carga (tras '$etapa'): salida limpia (código 0), sin ningún aviso de error" (($tc -match 'cerrada=True codigo=0') -and ($tc -match 'errores=0') -and ($tc -notmatch 'ERROR-MOSTRADO') -and ($tc -notmatch 'PushFrame'))
+}
 foreach ($par in @(@('normal', $normal), @('software', $soft))) {
     T "Proceso $($par[0]): se midieron todas las etapas" (@($par[1] | Where-Object { $_ -like 'TIEMPO:*' }).Count -ge 6)
 }

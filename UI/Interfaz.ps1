@@ -48,6 +48,7 @@ function Initialize-EstadoUI {
         FrameBomba        = $null
         SesionesCache     = @()
         PincelCache       = @{}
+        Cerrada           = $false
     }
 }
 
@@ -118,14 +119,27 @@ function Invoke-BombearUI {
     <#
     .SYNOPSIS
         Deja que WPF procese lo pendiente (pintar, eventos) y vuelve. Sirve durante la carga y en las pruebas.
+    .DESCRIPTION
+        Si la ventana se cerró (el usuario la cerró mientras cargaba) o el distribuidor ya terminó, NO sigue
+        bombeando: lanza la señal interna 'OPTILOW-VENTANA-CERRADA', que Start-OptiLowInterfaz recoge para salir
+        en silencio. Un cierre nunca debe acabar en un error en pantalla.
     #>
     $ui = $global:OptiLowUI
+    $d = [System.Windows.Threading.Dispatcher]::CurrentDispatcher
+    if ($ui.Cerrada -or $d.HasShutdownStarted -or $d.HasShutdownFinished) { $ui.Cerrada = $true; throw 'OPTILOW-VENTANA-CERRADA' }
     $frame = New-Object System.Windows.Threading.DispatcherFrame
     $ui.FrameBomba = $frame
-    [void][System.Windows.Threading.Dispatcher]::CurrentDispatcher.BeginInvoke(
-        [System.Windows.Threading.DispatcherPriority]::Background,
-        [Action] { $global:OptiLowUI.FrameBomba.Continue = $false })
-    [System.Windows.Threading.Dispatcher]::PushFrame($frame)
+    try {
+        [void]$d.BeginInvoke(
+            [System.Windows.Threading.DispatcherPriority]::Background,
+            [Action] { $global:OptiLowUI.FrameBomba.Continue = $false })
+        [System.Windows.Threading.Dispatcher]::PushFrame($frame)
+    }
+    catch {
+        if ($d.HasShutdownStarted -or $d.HasShutdownFinished) { $ui.Cerrada = $true; throw 'OPTILOW-VENTANA-CERRADA' }
+        throw
+    }
+    if ($ui.Cerrada) { throw 'OPTILOW-VENTANA-CERRADA' }
 }
 
 # ---------------------------------------------------------------------------------------------------------------
