@@ -346,6 +346,26 @@ function Get-MotivoNoAplicarUI {
     return $null
 }
 
+function Set-AyudaControlUI {
+    <#
+    .SYNOPSIS
+        Activa o desactiva un control según haya o no una razón para bloquearlo; la razón queda como tooltip
+        (los tooltips se muestran también con el control desactivado).
+    #>
+    param(
+        [Parameter(Mandatory)]$Control,
+        [AllowNull()][string]$Razon
+    )
+    if ($Razon) {
+        $Control.IsEnabled = $false
+        $Control.ToolTip = $Razon
+    }
+    else {
+        $Control.IsEnabled = $true
+        $Control.ToolTip = $null
+    }
+}
+
 function Update-EstadoBotonesUI {
     <#
     .SYNOPSIS
@@ -358,22 +378,24 @@ function Update-EstadoBotonesUI {
     $motivo = Get-MotivoNoAplicarUI
     $hayRec = ($ui.Recomendados.Count -gt 0)
 
-    $c.BtnActualizarDiag.IsEnabled = -not $ocupado
-    foreach ($n in @('DemoReal', 'DemoBajo', 'DemoMedio', 'DemoAlto')) { $c[$n].IsEnabled = -not $ocupado }
-    $c.BtnSeleccionarRec.IsEnabled = (-not $ocupado) -and $hayRec
-    $c.BtnQuitarSel.IsEnabled = -not $ocupado
-    $c.ChkOmitirPunto.IsEnabled = -not $ocupado
-    $c.BtnAplicar.IsEnabled = (-not $ocupado) -and ($null -eq $motivo)
-    $c.BtnActualizarSesiones.IsEnabled = (-not $ocupado) -and [bool]$global:OptiLow.DirRespaldos
-    $c.BtnDeshacer.IsEnabled = (-not $ocupado) -and ($null -eq $motivo)
-    if ($motivo) {
-        $c.BtnAplicar.ToolTip = $motivo
-        $c.BtnDeshacer.ToolTip = $motivo
-    }
-    else {
-        $c.BtnAplicar.ToolTip = $null
-        $c.BtnDeshacer.ToolTip = $null
-    }
+    $razonOcupado = $null
+    if ($ocupado) { $razonOcupado = 'Hay un trabajo en curso (' + $ui.Trabajo.Texto + '): espera a que termine.' }
+    $sinJournal = $null
+    if (-not $global:OptiLow.DirRespaldos) { $sinJournal = 'No hay carpeta de respaldos (journal) disponible: se necesitan permisos de administrador y que la carpeta esté bien protegida.' }
+
+    # Cada botón: activo si no hay motivo; si lo hay, el tooltip (que se ve también desactivado) lo explica
+    Set-AyudaControlUI -Control $c.BtnActualizarDiag -Razon $razonOcupado
+    foreach ($n in @('DemoReal', 'DemoBajo', 'DemoMedio', 'DemoAlto')) { Set-AyudaControlUI -Control $c[$n] -Razon $razonOcupado }
+    $razonSel = $razonOcupado
+    if ((-not $razonSel) -and (-not $hayRec)) { $razonSel = 'Aún no hay diagnóstico: espera a que termine o pulsa «Actualizar diagnóstico».' }
+    Set-AyudaControlUI -Control $c.BtnSeleccionarRec -Razon $razonSel
+    Set-AyudaControlUI -Control $c.BtnQuitarSel -Razon $razonOcupado
+    Set-AyudaControlUI -Control $c.ChkOmitirPunto -Razon $razonOcupado
+    $razonAplicar = $razonOcupado; if (-not $razonAplicar) { $razonAplicar = $motivo }
+    Set-AyudaControlUI -Control $c.BtnAplicar -Razon $razonAplicar
+    Set-AyudaControlUI -Control $c.BtnDeshacer -Razon $razonAplicar
+    $razonSes = $razonOcupado; if (-not $razonSes) { $razonSes = $sinJournal }
+    Set-AyudaControlUI -Control $c.BtnActualizarSesiones -Razon $razonSes
     Update-SeleccionUI
 }
 
@@ -581,7 +603,7 @@ function Update-FilaUI {
     $seleccionable = Test-FilaSeleccionableUI -Fila $Fila
     if ($seleccionable) { $Fila.Marco.Opacity = 1.0 } else { $Fila.Marco.Opacity = 0.6 }
     if ((-not $seleccionable) -and $Fila.Check.IsChecked) { $Fila.Check.IsChecked = $false }
-    if ($Fila.Estado -eq 'Aplicado') { $Fila.Check.ToolTip = 'Ya está aplicada.' }
+    if ($Fila.Estado -eq 'Aplicado') { $Fila.Check.ToolTip = 'Ya está aplicada. Se deshace desde «Respaldo y restauración» > «Deshacer última sesión».' }
     elseif ($Fila.Estado -eq 'NoAplica') { $Fila.Check.ToolTip = 'No aplica en este equipo.' }
     elseif ($Fila.Estado -eq 'Comprobando') { $Fila.Check.ToolTip = 'Comprobando el estado…' }
     else { $Fila.Check.ToolTip = $Fila.Def.Nombre }
@@ -910,7 +932,7 @@ function Invoke-TrasAplicarUI {
         }
         $titulo = 'Resumen'; $tipo = 'Info'
         if ($malos -gt 0) { $titulo = 'Resumen: hubo fallos'; $tipo = 'Peligro' } elseif ($aviso) { $tipo = 'Aviso' }
-        $msg = 'Resultado de cada optimización. Para deshacerlo todo: «Respaldo y restauración» > «Deshacer última sesión».'
+        $msg = 'Resultado de cada optimización. Para REVERTIRLAS: ve a la pestaña «Respaldo y restauración» y pulsa «Deshacer última sesión» (deshace todo lo de esta ejecución; todavía no se puede deshacer una sola desde su fila).'
         [void](Show-DialogoOptiLow -Titulo $titulo -Mensaje $msg -Detalles @($lineas) -Advertencia $aviso -Tipo $tipo -Botones @('Cerrar'))
     }
     Update-EstadosAsincronoUI
@@ -942,10 +964,10 @@ function Update-EstadosAsincronoUI {
 # ---------------------------------------------------------------------------------------------------------------
 
 function Add-FilaDatoUI {
-    # Auxiliar interna: "Etiqueta: valor" en el panel del diagnóstico.
+    # Auxiliar interna: "Etiqueta: valor" en el panel del diagnóstico. La etiqueta puede ir vacía (línea de continuación).
     param(
-        [Parameter(Mandatory)][string]$Etiqueta,
-        [AllowEmptyString()][string]$Valor,
+        [AllowEmptyString()][string]$Etiqueta = '',
+        [AllowEmptyString()][string]$Valor = '',
         [string]$Color = 'BrushTexto'
     )
 
@@ -953,13 +975,39 @@ function Add-FilaDatoUI {
     $tb = New-Object System.Windows.Controls.TextBlock
     $tb.TextWrapping = [System.Windows.TextWrapping]::Wrap
     $tb.Margin = (New-EspesorUI '0,0,0,3')
-    $r1 = New-Object System.Windows.Documents.Run($Etiqueta + ': ')
-    $r1.Foreground = Get-PincelUI -Clave 'BrushTextoSuave'
+    if ($Etiqueta.Length -gt 0) {
+        $r1 = New-Object System.Windows.Documents.Run($Etiqueta + ': ')
+        $r1.Foreground = Get-PincelUI -Clave 'BrushTextoSuave'
+        [void]$tb.Inlines.Add($r1)
+    }
     $r2 = New-Object System.Windows.Documents.Run($Valor)
     $r2.Foreground = Get-PincelUI -Clave $Color
-    [void]$tb.Inlines.Add($r1)
     [void]$tb.Inlines.Add($r2)
     [void]$panel.Children.Add($tb)
+}
+
+function Invoke-SeccionDiagUI {
+    <#
+    .SYNOPSIS
+        Pinta una parte del diagnóstico. Si falla, esa parte se omite, se registra en el log y el resto se sigue
+        pintando (un dato raro no debe cortar la pestaña). Devuelve $true si salió bien.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Nombre,
+        [Parameter(Mandatory)][scriptblock]$Bloque
+    )
+
+    try {
+        & $Bloque
+        return $true
+    }
+    catch {
+        $ui = $global:OptiLowUI
+        $ui.ErroresDiag = 1 + [int]$ui.ErroresDiag
+        try { Write-Log -Nivel WARN -Mensaje "Diagnóstico: no se pudo mostrar «$Nombre»: $($_.Exception.Message)" } catch { }
+        try { [void]$ui.C.PanelDiagnostico.Children.Add((New-TextoUI -Texto "(${Nombre}: no se pudo mostrar; mira el registro)" -Color 'BrushAviso' -Tam 13)) } catch { }
+        return $false
+    }
 }
 
 function Show-DiagnosticoUI {
@@ -967,6 +1015,8 @@ function Show-DiagnosticoUI {
     .SYNOPSIS
         Pinta el diagnóstico (solo muestra): datos del equipo, perfil con su motivo, recomendaciones por nivel,
         optimizaciones recomendadas con su motivo, duración y consultas lentas o fallidas.
+        Cada parte va aislada (Invoke-SeccionDiagUI): si una falla se omite y el resto se pinta.
+        Devuelve cuántas partes no se pudieron mostrar.
     #>
     param(
         [Parameter(Mandatory)]$Hardware,
@@ -974,101 +1024,134 @@ function Show-DiagnosticoUI {
     )
 
     $ui = $global:OptiLowUI
+    $ui.ErroresDiag = 0
     $panel = $ui.C.PanelDiagnostico
     $panel.Children.Clear()
     $hw = $Hardware
 
-    if ($hw.Simulado) {
-        [void]$panel.Children.Add((New-TextoUI -Texto 'DIAGNÓSTICO SIMULADO (datos de prueba, solo para ver)' -Color 'BrushSimulado' -Negrita -Margen '0,0,0,6'))
-    }
+    [void](Invoke-SeccionDiagUI -Nombre 'Aviso de simulación' -Bloque {
+            if ($hw.Simulado) {
+                [void]$panel.Children.Add((New-TextoUI -Texto 'DIAGNÓSTICO SIMULADO (datos de prueba, solo para ver)' -Color 'BrushSimulado' -Negrita -Margen '0,0,0,6'))
+            }
+            [void]$panel.Children.Add((New-TextoUI -Texto 'Equipo' -Color 'BrushAcento' -Negrita -Tam 14 -Margen '0,4,0,4'))
+        })
+    [void](Invoke-SeccionDiagUI -Nombre 'Equipo' -Bloque {
+            $e = $hw.Equipo
+            Add-FilaDatoUI -Etiqueta 'Equipo' -Valor ('{0} {1}' -f (Format-ValorHw $e.Fabricante), (Format-ValorHw $e.Modelo))
+            if ($hw.EsMaquinaVirtual -eq $true) {
+                Add-FilaDatoUI -Etiqueta 'Máquina virtual' -Valor ('hipervisor {0}. Motivo: {1}' -f (Format-ValorHw $hw.Hipervisor), $hw.MotivoVM) -Color 'BrushInfo'
+            }
+        })
+    [void](Invoke-SeccionDiagUI -Nombre 'Windows' -Bloque {
+            $w = $hw.Windows
+            if ($w) { Add-FilaDatoUI -Etiqueta 'Windows' -Valor ('{0} (compilación {1}, {2})' -f (Format-ValorHw $w.Nombre), (Format-ValorHw $w.Compilacion), (Format-ValorHw $w.Arquitectura)) }
+        })
+    [void](Invoke-SeccionDiagUI -Nombre 'CPU' -Bloque {
+            $cpu = $hw.CPU
+            if ($cpu) { Add-FilaDatoUI -Etiqueta 'CPU' -Valor ('{0}  [{1} núcleos / {2} hilos]' -f (Format-ValorHw $cpu.Nombre), (Format-ValorHw $cpu.Nucleos), (Format-ValorHw $cpu.Hilos)) }
+            else { Add-FilaDatoUI -Etiqueta 'CPU' -Valor 'desconocido' }
+        })
+    [void](Invoke-SeccionDiagUI -Nombre 'RAM' -Bloque {
+            Add-FilaDatoUI -Etiqueta 'RAM' -Valor (Format-RamHw -Ram $hw.RAM)
+        })
+    [void](Invoke-SeccionDiagUI -Nombre 'GPU' -Bloque {
+            if (@($hw.GPUs).Count -eq 0) { Add-FilaDatoUI -Etiqueta 'GPU' -Valor 'desconocido' }
+            foreach ($g in @($hw.GPUs)) {
+                $marcas = @()
+                if ($hw.GPUPrincipal -and ($g.Nombre -eq $hw.GPUPrincipal.Nombre)) { $marcas += 'principal' }
+                if ($g.EsVirtual) { $marcas += 'virtual/remota' }
+                if ($g.SinDriver) { $marcas += 'SIN DRIVER' }
+                if ($g.EsAntigua) { $marcas += 'antigua' }
+                if ($g.SinSoporteFabricante) { $marcas += 'sin soporte activo del fabricante' }
+                $fecha = 'sin fecha'; if ($g.FechaDriver) { $fecha = ('{0:yyyy-MM-dd}' -f $g.FechaDriver) }
+                $extra = ''; if ($marcas.Count -gt 0) { $extra = '  <' + ($marcas -join ', ') + '>' }
+                Add-FilaDatoUI -Etiqueta 'GPU' -Valor ('{0}  [driver {1}, {2}]{3}' -f $g.Nombre, (Format-ValorHw $g.DriverVersion), $fecha, $extra)
+            }
+        })
+    [void](Invoke-SeccionDiagUI -Nombre 'Disco' -Bloque {
+            $d = $hw.Disco
+            if ($d) {
+                $tipoTxt = $d.Tipo; if ($d.EsNVMe) { $tipoTxt = 'SSD NVMe' }
+                Add-FilaDatoUI -Etiqueta 'Disco' -Valor ('{0} {1}  [{2}; {3} GB, libre {4} GB = {5} %; salud {6}]' -f $d.Unidad, (Format-ValorHw $d.Modelo), $tipoTxt, (Format-ValorHw $d.TamanoGB), (Format-ValorHw $d.LibreGB), (Format-ValorHw $d.LibrePct), (Format-ValorHw $d.Salud))
+                if ($d.EsVirtual) { Add-FilaDatoUI -Etiqueta '' -Valor '(disco virtual: el tipo y la salud no son fiables)' -Color 'BrushTextoSuave' }
+            }
+            else { Add-FilaDatoUI -Etiqueta 'Disco' -Valor 'desconocido' }
+        })
+    [void](Invoke-SeccionDiagUI -Nombre 'Portátil' -Bloque {
+            $port = 'desconocido'; if ($hw.EsPortatil -eq $true) { $port = 'sí' } elseif ($hw.EsPortatil -eq $false) { $port = 'no' }
+            Add-FilaDatoUI -Etiqueta 'Portátil' -Valor $port
+        })
+    [void](Invoke-SeccionDiagUI -Nombre 'Arranque' -Bloque {
+            $ini = 'desconocido'; if ($null -ne $hw.InicioRapido) { $ini = $(if ($hw.InicioRapido) { 'activado' } else { 'desactivado' }) }
+            $txtArranque = 'tiempo encendido desconocido'; if ($null -ne $hw.ArranqueDias) { $txtArranque = ('{0} días encendido' -f $hw.ArranqueDias) }
+            Add-FilaDatoUI -Etiqueta 'Arranque' -Valor ('{0} (inicio rápido: {1})' -f $txtArranque, $ini)
+        })
+    [void](Invoke-SeccionDiagUI -Nombre 'Programas de inicio' -Bloque {
+            if ($hw.ProgramasInicio) { Add-FilaDatoUI -Etiqueta 'Programas de inicio' -Valor ('{0} habilitados ({1} deshabilitados)' -f $hw.ProgramasInicio.Habilitados, $hw.ProgramasInicio.Deshabilitados) }
+            else { Add-FilaDatoUI -Etiqueta 'Programas de inicio' -Valor 'desconocido' }
+        })
+    [void](Invoke-SeccionDiagUI -Nombre 'Equipo administrado' -Bloque {
+            $a = $hw.Administracion
+            if ($a) {
+                $txtAdm = 'no se pudo comprobar'
+                if ($a.Administrado -eq $true) { $txtAdm = 'SÍ: ' + ($a.Bloqueantes -join '; ') } elseif ($a.Administrado -eq $false) { $txtAdm = 'no (sin dominio ni Entra ID)' }
+                Add-FilaDatoUI -Etiqueta 'Equipo administrado' -Valor $txtAdm
+            }
+        })
 
-    [void]$panel.Children.Add((New-TextoUI -Texto 'Equipo' -Color 'BrushAcento' -Negrita -Tam 14 -Margen '0,4,0,4'))
-    $e = $hw.Equipo
-    Add-FilaDatoUI -Etiqueta 'Equipo' -Valor ('{0} {1}' -f (Format-ValorHw $e.Fabricante), (Format-ValorHw $e.Modelo))
-    if ($hw.EsMaquinaVirtual -eq $true) {
-        Add-FilaDatoUI -Etiqueta 'Máquina virtual' -Valor ('hipervisor {0}. Motivo: {1}' -f (Format-ValorHw $hw.Hipervisor), $hw.MotivoVM) -Color 'BrushInfo'
-    }
-    $w = $hw.Windows
-    if ($w) { Add-FilaDatoUI -Etiqueta 'Windows' -Valor ('{0} (compilación {1}, {2})' -f (Format-ValorHw $w.Nombre), (Format-ValorHw $w.Compilacion), (Format-ValorHw $w.Arquitectura)) }
-    $cpu = $hw.CPU
-    if ($cpu) { Add-FilaDatoUI -Etiqueta 'CPU' -Valor ('{0}  [{1} núcleos / {2} hilos]' -f (Format-ValorHw $cpu.Nombre), (Format-ValorHw $cpu.Nucleos), (Format-ValorHw $cpu.Hilos)) }
-    else { Add-FilaDatoUI -Etiqueta 'CPU' -Valor 'desconocido' }
-    Add-FilaDatoUI -Etiqueta 'RAM' -Valor (Format-RamHw -Ram $hw.RAM)
+    [void](Invoke-SeccionDiagUI -Nombre 'Perfil' -Bloque {
+            $colorPerfil = 'BrushTexto'
+            if ($hw.Perfil -eq 'Bajo') { $colorPerfil = 'BrushAviso' } elseif ($hw.Perfil -eq 'Alto') { $colorPerfil = 'BrushOk' }
+            [void]$panel.Children.Add((New-TextoUI -Texto ('PERFIL: {0}  ({1})' -f $hw.Perfil, $hw.PerfilMotivo) -Color $colorPerfil -Negrita -Tam 14 -Margen '0,12,0,4'))
+        })
 
-    if (@($hw.GPUs).Count -eq 0) { Add-FilaDatoUI -Etiqueta 'GPU' -Valor 'desconocido' }
-    foreach ($g in @($hw.GPUs)) {
-        $marcas = @()
-        if ($hw.GPUPrincipal -and ($g.Nombre -eq $hw.GPUPrincipal.Nombre)) { $marcas += 'principal' }
-        if ($g.EsVirtual) { $marcas += 'virtual/remota' }
-        if ($g.SinDriver) { $marcas += 'SIN DRIVER' }
-        if ($g.EsAntigua) { $marcas += 'antigua' }
-        if ($g.SinSoporteFabricante) { $marcas += 'sin soporte activo del fabricante' }
-        $fecha = 'sin fecha'; if ($g.FechaDriver) { $fecha = ('{0:yyyy-MM-dd}' -f $g.FechaDriver) }
-        $extra = ''; if ($marcas.Count -gt 0) { $extra = '  <' + ($marcas -join ', ') + '>' }
-        Add-FilaDatoUI -Etiqueta 'GPU' -Valor ('{0}  [driver {1}, {2}]{3}' -f $g.Nombre, (Format-ValorHw $g.DriverVersion), $fecha, $extra)
-    }
-    $d = $hw.Disco
-    if ($d) {
-        $tipoTxt = $d.Tipo; if ($d.EsNVMe) { $tipoTxt = 'SSD NVMe' }
-        Add-FilaDatoUI -Etiqueta 'Disco' -Valor ('{0} {1}  [{2}; {3} GB, libre {4} GB = {5} %; salud {6}]' -f $d.Unidad, (Format-ValorHw $d.Modelo), $tipoTxt, (Format-ValorHw $d.TamanoGB), (Format-ValorHw $d.LibreGB), (Format-ValorHw $d.LibrePct), (Format-ValorHw $d.Salud))
-        if ($d.EsVirtual) { Add-FilaDatoUI -Etiqueta '' -Valor '(disco virtual: el tipo y la salud no son fiables)' -Color 'BrushTextoSuave' }
-    }
-    else { Add-FilaDatoUI -Etiqueta 'Disco' -Valor 'desconocido' }
-    $port = 'desconocido'; if ($hw.EsPortatil -eq $true) { $port = 'sí' } elseif ($hw.EsPortatil -eq $false) { $port = 'no' }
-    Add-FilaDatoUI -Etiqueta 'Portátil' -Valor $port
-    $ini = 'desconocido'; if ($null -ne $hw.InicioRapido) { $ini = $(if ($hw.InicioRapido) { 'activado' } else { 'desactivado' }) }
-    $txtArranque = 'tiempo encendido desconocido'; if ($null -ne $hw.ArranqueDias) { $txtArranque = ('{0} días encendido' -f $hw.ArranqueDias) }
-    Add-FilaDatoUI -Etiqueta 'Arranque' -Valor ('{0} (inicio rápido: {1})' -f $txtArranque, $ini)
-    if ($hw.ProgramasInicio) { Add-FilaDatoUI -Etiqueta 'Programas de inicio' -Valor ('{0} habilitados ({1} deshabilitados)' -f $hw.ProgramasInicio.Habilitados, $hw.ProgramasInicio.Deshabilitados) }
-    else { Add-FilaDatoUI -Etiqueta 'Programas de inicio' -Valor 'desconocido' }
-    $a = $hw.Administracion
-    if ($a) {
-        $txtAdm = 'no se pudo comprobar'
-        if ($a.Administrado -eq $true) { $txtAdm = 'SÍ: ' + ($a.Bloqueantes -join '; ') } elseif ($a.Administrado -eq $false) { $txtAdm = 'no (sin dominio ni Entra ID)' }
-        Add-FilaDatoUI -Etiqueta 'Equipo administrado' -Valor $txtAdm
-    }
-
-    $colorPerfil = 'BrushTexto'
-    if ($hw.Perfil -eq 'Bajo') { $colorPerfil = 'BrushAviso' } elseif ($hw.Perfil -eq 'Alto') { $colorPerfil = 'BrushOk' }
-    [void]$panel.Children.Add((New-TextoUI -Texto ('PERFIL: {0}  ({1})' -f $hw.Perfil, $hw.PerfilMotivo) -Color $colorPerfil -Negrita -Tam 14 -Margen '0,12,0,4'))
-
-    [void]$panel.Children.Add((New-TextoUI -Texto 'Recomendaciones' -Color 'BrushAcento' -Negrita -Tam 14 -Margen '0,10,0,4'))
-    if (@($hw.Recomendaciones).Count -eq 0) { [void]$panel.Children.Add((New-TextoUI -Texto 'Sin recomendaciones.' -Color 'BrushTextoSuave')) }
+    [void](Invoke-SeccionDiagUI -Nombre 'Recomendaciones' -Bloque {
+            [void]$panel.Children.Add((New-TextoUI -Texto 'Recomendaciones' -Color 'BrushAcento' -Negrita -Tam 14 -Margen '0,10,0,4'))
+            if (@($hw.Recomendaciones).Count -eq 0) { [void]$panel.Children.Add((New-TextoUI -Texto 'Sin recomendaciones.' -Color 'BrushTextoSuave')) }
+        })
     foreach ($rec in @($hw.Recomendaciones)) {
-        $clave = switch ($rec.Nivel) { 'Crítico' { 'BrushError' } 'Aviso' { 'BrushAviso' } 'Info' { 'BrushInfo' } default { 'BrushTextoSuave' } }
-        [void]$panel.Children.Add((New-TextoUI -Texto ('[{0}] {1}' -f $rec.Nivel, $rec.Titulo) -Color $clave -Negrita -Margen '0,4,0,0'))
-        [void]$panel.Children.Add((New-TextoUI -Texto $rec.Detalle -Color 'BrushTextoSuave' -Tam 13 -Margen '14,0,0,2'))
+        [void](Invoke-SeccionDiagUI -Nombre 'Una recomendación' -Bloque {
+                $clave = switch ($rec.Nivel) { 'Crítico' { 'BrushError' } 'Aviso' { 'BrushAviso' } 'Info' { 'BrushInfo' } default { 'BrushTextoSuave' } }
+                [void]$panel.Children.Add((New-TextoUI -Texto ('[{0}] {1}' -f $rec.Nivel, $rec.Titulo) -Color $clave -Negrita -Margen '0,4,0,0'))
+                [void]$panel.Children.Add((New-TextoUI -Texto ([string]$rec.Detalle) -Color 'BrushTextoSuave' -Tam 13 -Margen '14,0,0,2'))
+            })
     }
 
-    if (@($Recomendados).Count -gt 0) {
-        [void]$panel.Children.Add((New-TextoUI -Texto 'Optimizaciones recomendadas para este equipo' -Color 'BrushAcento' -Negrita -Tam 14 -Margen '0,12,0,4'))
-        foreach ($t in @($Recomendados)) {
-            $marca = 'No recomendada'; $clave = 'BrushTextoSuave'
-            if ($t.Recomendado) { $marca = 'RECOMENDADA'; $clave = 'BrushOk' }
-            [void]$panel.Children.Add((New-TextoUI -Texto ('{0}  ·  {1}  ·  {2}' -f $marca, $t.Nombre, $t.Estado) -Color $clave -Negrita -Margen '0,3,0,0'))
-            if ($t.Motivo) { [void]$panel.Children.Add((New-TextoUI -Texto ('Por qué: ' + $t.Motivo) -Color 'BrushTextoSuave' -Tam 13 -Margen '14,0,0,2')) }
-        }
-    }
+    [void](Invoke-SeccionDiagUI -Nombre 'Optimizaciones recomendadas' -Bloque {
+            if (@($Recomendados).Count -gt 0) {
+                [void]$panel.Children.Add((New-TextoUI -Texto 'Optimizaciones recomendadas para este equipo' -Color 'BrushAcento' -Negrita -Tam 14 -Margen '0,12,0,4'))
+                foreach ($t in @($Recomendados)) {
+                    $marca = 'No recomendada'; $clave = 'BrushTextoSuave'
+                    if ($t.Recomendado) { $marca = 'RECOMENDADA'; $clave = 'BrushOk' }
+                    [void]$panel.Children.Add((New-TextoUI -Texto ('{0}  ·  {1}  ·  {2}' -f $marca, $t.Nombre, $t.Estado) -Color $clave -Negrita -Margen '0,3,0,0'))
+                    if ($t.Motivo) { [void]$panel.Children.Add((New-TextoUI -Texto ('Por qué: ' + $t.Motivo) -Color 'BrushTextoSuave' -Tam 13 -Margen '14,0,0,2')) }
+                }
+            }
+        })
 
-    [void]$panel.Children.Add((New-TextoUI -Texto '' -Margen '0,6,0,0'))
-    if ($hw.Simulado) {
-        [void]$panel.Children.Add((New-TextoUI -Texto 'Diagnóstico simulado: no se consultó el hardware real.' -Color 'BrushSimulado'))
-    }
-    else {
-        [void]$panel.Children.Add((New-TextoUI -Texto ('Diagnóstico completado en {0:N1} s.' -f ($hw.DuracionMs / 1000)) -Color 'BrushTextoSuave'))
-        $consultas = @($hw.Consultas)
-        $lentas = @($consultas | Sort-Object Ms -Descending | Select-Object -First 3)
-        if ($lentas.Count -gt 0) { [void]$panel.Children.Add((New-TextoUI -Texto ('Consultas más lentas: ' + (($lentas | ForEach-Object { '{0} ({1} ms)' -f $_.Nombre, $_.Ms }) -join ', ')) -Color 'BrushTextoSuave' -Tam 13)) }
-        $malas = @($consultas | Where-Object { $_.Estado -ne 'Ok' })
-        if ($malas.Count -gt 0) { [void]$panel.Children.Add((New-TextoUI -Texto ('Sin datos (marcadas como desconocidas): ' + (($malas | ForEach-Object { '{0} [{1}]' -f $_.Nombre, $_.Estado }) -join ', ')) -Color 'BrushAviso' -Tam 13)) }
-        if ($hw.DuracionMs -gt 10000) { [void]$panel.Children.Add((New-TextoUI -Texto 'Aviso: el diagnóstico tardó más de 10 s (equipo lento o alguna consulta con problemas).' -Color 'BrushAviso' -Tam 13)) }
-    }
+    [void](Invoke-SeccionDiagUI -Nombre 'Duración y consultas' -Bloque {
+            [void]$panel.Children.Add((New-TextoUI -Texto '' -Margen '0,6,0,0'))
+            if ($hw.Simulado) {
+                [void]$panel.Children.Add((New-TextoUI -Texto 'Diagnóstico simulado: no se consultó el hardware real.' -Color 'BrushSimulado'))
+            }
+            else {
+                [void]$panel.Children.Add((New-TextoUI -Texto ('Diagnóstico completado en {0:N1} s.' -f ($hw.DuracionMs / 1000)) -Color 'BrushTextoSuave'))
+                $consultas = @($hw.Consultas)
+                $lentas = @($consultas | Sort-Object Ms -Descending | Select-Object -First 3)
+                if ($lentas.Count -gt 0) { [void]$panel.Children.Add((New-TextoUI -Texto ('Consultas más lentas: ' + (($lentas | ForEach-Object { '{0} ({1} ms)' -f $_.Nombre, $_.Ms }) -join ', ')) -Color 'BrushTextoSuave' -Tam 13)) }
+                $malas = @($consultas | Where-Object { $_.Estado -ne 'Ok' })
+                if ($malas.Count -gt 0) { [void]$panel.Children.Add((New-TextoUI -Texto ('Sin datos (marcadas como desconocidas): ' + (($malas | ForEach-Object { '{0} [{1}]' -f $_.Nombre, $_.Estado }) -join ', ')) -Color 'BrushAviso' -Tam 13)) }
+                if ($hw.DuracionMs -gt 10000) { [void]$panel.Children.Add((New-TextoUI -Texto 'Aviso: el diagnóstico tardó más de 10 s (equipo lento o alguna consulta con problemas).' -Color 'BrushAviso' -Tam 13)) }
+            }
+        })
+    return [int]$ui.ErroresDiag
 }
 
 function Invoke-DiagnosticoUI {
     <#
     .SYNOPSIS
         Lanza el diagnóstico en segundo plano (real, o simulado si el selector -Demo lo pide) y lo pinta al terminar.
+        Si algo falla al mostrarlo, la pestaña lo dice con un mensaje claro y el resto (recomendaciones, botones) sigue.
     #>
     $ui = $global:OptiLowUI
     if ($ui.Trabajo) { return }
@@ -1084,20 +1167,38 @@ function Invoke-DiagnosticoUI {
             $ui = $global:OptiLowUI
             if ($res.Error) {
                 $ui.C.PanelDiagnostico.Children.Clear()
-                [void]$ui.C.PanelDiagnostico.Children.Add((New-TextoUI -Texto "No se pudo completar el diagnóstico: $($res.Error)" -Color 'BrushError'))
+                [void]$ui.C.PanelDiagnostico.Children.Add((New-TextoUI -Texto "No se pudo completar el diagnóstico: $($res.Error). Pulsa «Actualizar diagnóstico» para reintentarlo o mira el registro." -Color 'BrushError'))
                 return
             }
             $out = Get-ResultadoUnicoUI -Resultado $res
+            if ((-not $out) -or (-not $out.Hardware)) {
+                $ui.C.PanelDiagnostico.Children.Clear()
+                [void]$ui.C.PanelDiagnostico.Children.Add((New-TextoUI -Texto 'El diagnóstico no devolvió datos. Pulsa «Actualizar diagnóstico» para reintentarlo o mira el registro.' -Color 'BrushError'))
+                return
+            }
             $ui.Hardware = $out.Hardware
             $ui.Simulado = [bool]$out.Hardware.Simulado
             # Bloqueo estricto también en el hilo de la interfaz (el runspace de trabajo lo fija por su cuenta)
             $global:OptiLow.SimulacionActiva = $ui.Simulado
             $ui.Recomendados = @{}
             foreach ($r in @($out.Recomendados)) { $ui.Recomendados[$r.Id] = $r }
-            Show-DiagnosticoUI -Hardware $out.Hardware -Recomendados @($out.Recomendados)
-            Update-RecomendacionesFilasUI
-            Update-BannersUI
-            Update-EstadoBotonesUI
+            # Cada paso va aislado: un fallo al pintar no debe dejar la pestaña a medias ni los botones sin actualizar
+            try {
+                $fallos = Show-DiagnosticoUI -Hardware $out.Hardware -Recomendados @($out.Recomendados)
+                if ($fallos -gt 0) {
+                    [void]$ui.C.PanelDiagnostico.Children.Insert(0, (New-TextoUI -Texto "Aviso: $fallos parte(s) del diagnóstico no se pudieron mostrar (se omitieron). Detalles en el registro." -Color 'BrushAviso' -Margen '0,0,0,6'))
+                }
+            }
+            catch {
+                Write-Log -Nivel ERROR -Mensaje "No se pudo mostrar el diagnóstico: $($_.Exception.Message)"
+                try {
+                    $ui.C.PanelDiagnostico.Children.Clear()
+                    [void]$ui.C.PanelDiagnostico.Children.Add((New-TextoUI -Texto "El diagnóstico terminó pero no se pudo mostrar: $($_.Exception.Message). Mira el registro." -Color 'BrushError'))
+                } catch { }
+            }
+            foreach ($paso in @({ Update-RecomendacionesFilasUI }, { Update-BannersUI }, { Update-EstadoBotonesUI })) {
+                try { & $paso } catch { Write-Log -Nivel ERROR -Mensaje "Error al actualizar la interfaz tras el diagnóstico: $($_.Exception.Message)" }
+            }
         })
 }
 
@@ -1284,6 +1385,23 @@ function Test-PuedeCerrarUI {
 # Conexión de eventos y contenido inicial
 # ---------------------------------------------------------------------------------------------------------------
 
+function Invoke-EnterControlUI {
+    <#
+    .SYNOPSIS
+        Enter activa también las casillas y los botones de opción (Espacio ya lo hacía): se ejecuta el mismo clic
+        que el ratón, así que corren los mismos manejadores. Devuelve $true si el control lo gestionó.
+    #>
+    param(
+        $Elemento
+    )
+
+    if ((-not $Elemento) -or (-not $Elemento.IsEnabled)) { return $false }
+    if (($Elemento -isnot [System.Windows.Controls.CheckBox]) -and ($Elemento -isnot [System.Windows.Controls.RadioButton])) { return $false }
+    $metodo = [System.Windows.Controls.Primitives.ButtonBase].GetMethod('OnClick', [System.Reflection.BindingFlags]'NonPublic,Instance')
+    [void]$metodo.Invoke($Elemento, @())
+    return $true
+}
+
 function Connect-EventosUI {
     <#
     .SYNOPSIS
@@ -1307,6 +1425,22 @@ function Connect-EventosUI {
     $c.BtnLimpiarLog.Add_Click({ Invoke-ManejadorUI { Clear-VistaLogUI } })
     $c.ChkSoftware.Add_Click({ Invoke-ManejadorUI { Invoke-CasillaSoftwareUI } })
 
+    # Con ventanas bajas el panel de detalle se encoge para que la lista conserve sitio (se desplaza igualmente)
+    $c.VentanaPrincipal.Add_SizeChanged({
+            param($s, $e)
+            Invoke-ManejadorUI {
+                $alto = [math]::Min(84, [math]::Max(44, [math]::Round($s.ActualHeight * 0.13)))
+                $global:OptiLowUI.C.ScrollDetalle.MaxHeight = $alto
+            }
+        })
+    $c.VentanaPrincipal.Add_PreviewKeyDown({
+            param($s, $e)
+            Invoke-ManejadorUI {
+                if ($e.Key -eq 'Return') {
+                    if (Invoke-EnterControlUI -Elemento ([System.Windows.Input.Keyboard]::FocusedElement)) { $e.Handled = $true }
+                }
+            }
+        })
     $c.VentanaPrincipal.Add_Closing({
             param($s, $e)
             try { if (-not (Test-PuedeCerrarUI)) { $e.Cancel = $true } } catch { }

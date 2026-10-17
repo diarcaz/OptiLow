@@ -117,3 +117,63 @@ function Test-EscritorioDeOtroUsuario {
         return $null
     }
 }
+
+function Enter-InstanciaUnica {
+    <#
+    .SYNOPSIS
+        Toma el mutex de "una sola instancia de la interfaz". Devuelve $true si este proceso es el primero.
+    .DESCRIPTION
+        Mutex con nombre en el espacio global (vale entre procesos elevados y no elevados). Si otro proceso ya lo
+        tiene (o no se puede abrir por permisos), devuelve $false. El mutex se guarda en una variable global para que
+        viva lo que dure el proceso. -EsperaMs permite esperar un poco (el proceso elevado espera al que lo lanzó).
+    .PARAMETER Nombre
+        Nombre del mutex (las pruebas usan uno propio para no chocar con una instancia real).
+    #>
+    param(
+        [string]$Nombre = 'Global\OptiLow_Interfaz',
+        [int]$EsperaMs = 0
+    )
+
+    try {
+        $m = New-Object System.Threading.Mutex($false, $Nombre)
+        $tomado = $false
+        try { $tomado = $m.WaitOne($EsperaMs) }
+        catch [System.Threading.AbandonedMutexException] { $tomado = $true }
+        if ($tomado) {
+            $global:OptiLowMutexInstancia = $m
+            return $true
+        }
+        $m.Dispose()
+        return $false
+    }
+    catch {
+        # Sin permiso para abrir el mutex: lo tiene otro proceso (p. ej. uno elevado)
+        return $false
+    }
+}
+
+function Show-YaAbierto {
+    <#
+    .SYNOPSIS
+        Un segundo arranque: trae al frente la ventana de OptiLow ya abierta o, si no se puede (otro nivel de
+        permisos, o todavía se está abriendo), avisa y sale. Devuelve $true si se trajo al frente.
+    #>
+    $traida = $false
+    try {
+        Add-Type -AssemblyName Microsoft.VisualBasic
+        $p = Get-Process -ErrorAction Stop | Where-Object { ($_.MainWindowTitle -eq 'OptiLow') -and (@('powershell', 'pwsh') -contains $_.ProcessName) } | Select-Object -First 1
+        if ($p) {
+            [Microsoft.VisualBasic.Interaction]::AppActivate($p.Id)
+            $traida = $true
+        }
+    }
+    catch { }
+    if (-not $traida) {
+        try {
+            $wsh = New-Object -ComObject WScript.Shell
+            [void]$wsh.Popup('OptiLow ya está abierto (o se está abriendo). Busca su ventana en la barra de tareas.', 8, 'OptiLow', 64)
+        }
+        catch { }
+    }
+    return $traida
+}

@@ -112,6 +112,8 @@ function Start-OptiLowInterfaz {
         Set-TiempoUI -Etapa 'Ventana creada'
         Wait-PrimerDibujoUI
         Set-TiempoUI -Etapa 'Primer dibujo ("Cargando…")'
+        # Iniciar.cmd deja de mostrar "Abriendo OptiLow…" cuando ya hay ventana (la función vive en OptiLow.ps1)
+        if (Get-Command -Name 'Write-SenalApertura' -ErrorAction SilentlyContinue) { Write-SenalApertura }
 
         # 4. Core/ archivo por archivo, pintando entre uno y otro. Un fallo aquí es fatal.
         $orden = @($global:OptiLowOrdenCore)

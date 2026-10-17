@@ -23,6 +23,8 @@
     Interno: con -SoloArranque, fuerza el renderizado por software.
 .PARAMETER SimularFalloVentana
     Interno: con -SoloArranque, hace fallar la primera creación de la ventana (prueba el reintento en software).
+.PARAMETER ProbarInstancia
+    Interno: intenta tomar el mutex de instancia única con ese nombre, imprime PRIMERA=True/False y sale.
 .PARAMETER SimularErrorArranque
     Interno: con -SoloArranque, hace fallar siempre la creación de la ventana (prueba el aviso sin WPF).
 #>
@@ -30,7 +32,8 @@ param(
     [switch]$SoloArranque,
     [switch]$Software,
     [switch]$SimularFalloVentana,
-    [switch]$SimularErrorArranque
+    [switch]$SimularErrorArranque,
+    [string]$ProbarInstancia
 )
 
 $ErrorActionPreference = 'Stop'
@@ -62,6 +65,13 @@ foreach ($n in @('Interfaz.ps1', 'Trabajos.ps1', 'Inicio.ps1')) { Import-OptiLow
 # Show-ErrorSinWpf vive en OptiLow.ps1 (no se puede cargar sin ejecutarlo): aquí se sustituye por una de prueba
 $global:PruebaErrores = New-Object System.Collections.ArrayList
 function global:Show-ErrorSinWpf { param([string]$Mensaje, [string]$Titulo) [void]$global:PruebaErrores.Add($Mensaje) }
+
+if ($ProbarInstancia) {
+    Write-Output ('PRIMERA=' + (Enter-InstanciaUnica -Nombre $ProbarInstancia))
+    $env:ProgramData = $programDataReal
+    Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    exit 0
+}
 
 # ---------------------------------------------------------------------------------------------
 # Modo interno: arrancar, imprimir tiempos y salir (procesos aparte)
@@ -599,6 +609,140 @@ T 'Diálogo real: exactamente un botón IsDefault y uno IsCancel' ($global:Prueb
 T 'Diálogo real: los botones son enfocables' ($global:PruebaDlg.Enfocables -eq 2)
 T 'Diálogo real: pulsar el segundo botón devuelve su índice (1)' ($resp -eq 1)
 $ui.C = $c
+
+Seccion '11b. Diagnóstico: cada forma de datos se pinta completa (incluida una VM con disco virtual) y un error no corta el resto'
+function Get-TextoDiag { return (@($c.PanelDiagnostico.Children | ForEach-Object { if ($_ -is [System.Windows.Controls.TextBlock]) { if ($_.Text) { $_.Text } else { (@($_.Inlines | ForEach-Object { $_.Text }) -join '') } } }) -join "`n") }
+$ui.C = $c
+$ui.Recomendados = @{}
+T 'Add-FilaDatoUI acepta una etiqueta vacía (la causa del fallo en la VM)' ($(try { $c.PanelDiagnostico.Children.Clear(); Add-FilaDatoUI -Etiqueta '' -Valor 'línea sin etiqueta'; $true } catch { $false }))
+foreach ($perfilSim in @('Bajo', 'Medio', 'Alto')) {
+    $h = New-HardwareSimulado -Perfil $perfilSim
+    $fallos = Show-DiagnosticoUI -Hardware $h -Recomendados @()
+    $txt = Get-TextoDiag
+    T "Perfil simulado $perfilSim`: se pinta completo (Portátil, Arranque, Programas de inicio, administrado, PERFIL y recomendaciones)" (($fallos -eq 0) -and ($txt -match 'Portátil') -and ($txt -match 'Arranque') -and ($txt -match 'Programas de inicio') -and ($txt -match 'Equipo administrado') -and ($txt -match "PERFIL: $perfilSim") -and ($txt -match 'Recomendaciones'))
+}
+# VM: disco virtual (la línea "(disco virtual...)" no tiene etiqueta; en un equipo real no aparece)
+$hVm = New-HardwareSimulado -Perfil Bajo
+$hVm.EsMaquinaVirtual = $true; $hVm.Hipervisor = 'VirtualBox'; $hVm.MotivoVM = 'fabricante innotek GmbH'
+$hVm.Disco.EsVirtual = $true
+$hVm = Complete-Diagnostico -Hardware $hVm
+$fallos = Show-DiagnosticoUI -Hardware $hVm -Recomendados @()
+$txt = Get-TextoDiag
+T 'VM con disco virtual: se pinta la línea "(disco virtual...)" y TODO lo que va después' (($fallos -eq 0) -and ($txt -match 'disco virtual') -and ($txt -match 'Máquina virtual') -and ($txt -match 'Portátil') -and ($txt -match 'Arranque') -and ($txt -match 'Equipo administrado') -and ($txt -match 'PERFIL: '))
+# Datos que faltan (RAM, disco, CPU y arranque desconocidos)
+$hVacio = New-HardwareSimulado -Perfil Medio
+$hVacio.RAM = $null; $hVacio.Disco = $null; $hVacio.CPU = $null; $hVacio.GPUs = @(); $hVacio.ArranqueDias = $null; $hVacio.InicioRapido = $null; $hVacio.ProgramasInicio = $null; $hVacio.Administracion = $null
+$fallos = Show-DiagnosticoUI -Hardware $hVacio -Recomendados @()
+$txt = Get-TextoDiag
+T 'Con datos que faltan: se pinta con "desconocido" y sin errores' (($fallos -eq 0) -and ($txt -match 'desconocido') -and ($txt -match 'PERFIL: '))
+if ($ui.Hardware) {
+    $fallos = Show-DiagnosticoUI -Hardware $ui.Hardware -Recomendados @()
+    T 'El diagnóstico real de este equipo se pinta sin errores' ($fallos -eq 0)
+}
+# Un error al pintar una parte NO corta el resto
+function global:Format-RamHw { throw 'error de prueba en la RAM' }
+$fallos = Show-DiagnosticoUI -Hardware (New-HardwareSimulado -Perfil Bajo) -Recomendados @()
+$txt = Get-TextoDiag
+[void](Invoke-VaciarColaLogUI -Tope 5000)
+T 'Un fallo en una parte: se omite, se avisa en la pestaña y el RESTO se pinta' (($fallos -eq 1) -and ($txt -match 'RAM: no se pudo mostrar') -and ($txt -match 'Portátil') -and ($txt -match 'PERFIL: Bajo') -and ($txt -match 'Recomendaciones'))
+T 'El fallo parcial queda en el registro' (@($ui.LineasLog | Where-Object { $_ -match 'no se pudo mostrar «RAM»' }).Count -ge 1)
+Import-OptiLowArchivo -Ruta (Join-Path $raiz 'Core\Consola.ps1')
+# Si el diagnóstico falla (error del trabajo, sin datos o fallo total al pintar) la pestaña lo dice con claridad
+$scriptOriginal = $global:OptiLowScriptsTrabajo['diagnostico']
+$global:OptiLowScriptsTrabajo['diagnostico'] = "param(`$Perfil) throw 'fallo simulado del diagnóstico'"
+Invoke-DiagnosticoUI; [void](Esperar-Libre 30000)
+$txt = Get-TextoDiag
+T 'Si el trabajo de diagnóstico falla, la pestaña muestra un mensaje claro y cómo reintentar' (($txt -match 'No se pudo completar el diagnóstico') -and ($txt -match 'fallo simulado') -and ($txt -match 'Actualizar diagnóstico'))
+$global:OptiLowScriptsTrabajo['diagnostico'] = "param(`$Perfil) `$null"
+Invoke-DiagnosticoUI; [void](Esperar-Libre 30000)
+T 'Si el diagnóstico no devuelve datos, la pestaña lo dice' ((Get-TextoDiag) -match 'no devolvió datos')
+$global:OptiLowScriptsTrabajo['diagnostico'] = $scriptOriginal
+function global:Show-DiagnosticoUI { param($Hardware, $Recomendados) throw 'fallo total de prueba al pintar' }
+Invoke-DiagnosticoUI; [void](Esperar-Libre 120000)
+$txt = Get-TextoDiag
+T 'Si falla todo el pintado: mensaje claro en la pestaña' (($txt -match 'no se pudo mostrar') -and ($txt -match 'fallo total de prueba'))
+T 'Aunque falle el pintado, las recomendaciones y los botones se actualizan ("Seleccionar recomendadas" activo)' (($ui.Recomendados.Count -gt 0) -and $c.BtnSeleccionarRec.IsEnabled)
+Import-OptiLowArchivo -Ruta (Join-Path $raiz 'UI\Interfaz.ps1')
+Invoke-DiagnosticoUI; [void](Esperar-Libre 120000)
+T 'Tras restaurar, el diagnóstico real se vuelve a pintar completo' ((Get-TextoDiag) -match 'PERFIL: ')
+
+Seccion '11c. Usabilidad: Enter, menú lateral, registro, ayuda de deshacer y tooltips de botones desactivados'
+Set-EstadosFijos
+$cb = $ui.Filas[$idA].Check
+$cb.IsChecked = $false
+T 'Enter marca una casilla de optimización' ((Invoke-EnterControlUI -Elemento $cb) -and ($cb.IsChecked -eq $true))
+T 'Enter la desmarca' ((Invoke-EnterControlUI -Elemento $cb) -and ($cb.IsChecked -ne $true))
+T 'Enter en una fila ya aplicada no la deja marcada (mismo manejador que el clic)' ($(Update-EstadosFilasUI -Estados @([pscustomobject]@{ Id = $idA; Estado = 'Aplicado'; Detalle = '' }); [void](Invoke-EnterControlUI -Elemento $cb); ($cb.IsChecked -ne $true)))
+Set-EstadosFijos
+$ChkO = $c.ChkOmitirPunto; $ChkO.IsChecked = $false
+T 'Enter también marca "Omitir el punto de restauración"' ((Invoke-EnterControlUI -Elemento $ChkO) -and ($ChkO.IsChecked -eq $true))
+$ChkO.IsChecked = $false
+T 'Enter en un botón no lo gestiona el manejador de casillas (el botón ya reacciona solo)' (-not (Invoke-EnterControlUI -Elemento $c.BtnQuitarSel))
+T 'Enter no hace nada en un control desactivado' ($(try { $c.ChkOmitirPunto.IsEnabled = $false; -not (Invoke-EnterControlUI -Elemento $c.ChkOmitirPunto) } finally { $c.ChkOmitirPunto.IsEnabled = $true }))
+
+# Menú lateral completo
+$c.Navegacion.SelectedIndex = 3; $w.Width = 860; $w.Height = 460; $w.UpdateLayout(); Invoke-BombearUI
+$navTb = $c.NavRespaldo.Content
+$rNav = Get-RectEn -El $navTb -Raiz $c.Navegacion
+T 'El menú lateral no recorta "Respaldo y restauración" (el texto cabe o salta de línea dentro del menú)' (($navTb.TextWrapping -eq 'Wrap') -and ($rNav.Der -le $c.Navegacion.ActualWidth + 1) -and ($navTb.ActualWidth -ge $navTb.DesiredSize.Width - 1))
+$w.Width = 1000; $w.Height = 600; Invoke-BombearUI
+
+# Registro: las líneas largas saltan de línea
+Clear-VistaLogUI
+$c.Navegacion.SelectedIndex = 4; Invoke-BombearUI
+Add-LineaLogUI -Linea ('[10:00:00] [INFO] ' + ('línea muy larga ' * 60))
+$w.UpdateLayout(); Invoke-BombearUI
+$svLog = $null
+function Buscar-Scroll { param($Nodo)
+    if ($Nodo -is [System.Windows.Controls.ScrollViewer]) { return $Nodo }
+    $n = [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($Nodo)
+    for ($i = 0; $i -lt $n; $i++) { $r = Buscar-Scroll ([System.Windows.Media.VisualTreeHelper]::GetChild($Nodo, $i)); if ($r) { return $r } }
+    return $null }
+$svLog = Buscar-Scroll $c.ListaLog
+T 'Registro: una línea de 1000 caracteres salta de línea (sin barra de desplazamiento horizontal)' ($svLog -and ($svLog.ExtentWidth -le $svLog.ViewportWidth + 1) -and ($c.ListaLog.Items[0].TextWrapping -eq 'Wrap'))
+Clear-VistaLogUI
+$c.Navegacion.SelectedIndex = 0
+
+# Ayuda para deshacer
+T 'Optimizaciones: texto visible que explica que se deshace desde «Respaldo y restauración»' (($c.TxtAyudaDeshacer.Text -match 'Respaldo y restauración') -and ($c.TxtAyudaDeshacer.Text -match 'Deshacer última sesión'))
+Update-EstadosFilasUI -Estados @([pscustomobject]@{ Id = $idA; Estado = 'Aplicado'; Detalle = '' })
+T 'Una fila "Aplicado" explica en su tooltip dónde se deshace' ($ui.Filas[$idA].Check.ToolTip -match 'Respaldo y restauración')
+Set-EstadosFijos
+
+# Tooltips de los botones desactivados
+T 'Los tooltips se muestran también en controles desactivados (ShowOnDisabled)' ([System.Windows.Controls.ToolTipService]::GetShowOnDisabled($c.BtnAplicar) -and [System.Windows.Controls.ToolTipService]::GetShowOnDisabled($c.BtnSeleccionarRec) -and [System.Windows.Controls.ToolTipService]::GetShowOnDisabled($c.ChkOmitirPunto) -and [System.Windows.Controls.ToolTipService]::GetShowOnDisabled($c.DemoBajo))
+$recGuardadas = $ui.Recomendados
+$ui.Recomendados = @{}
+Update-EstadoBotonesUI
+T '"Seleccionar recomendadas" sin diagnóstico: desactivado y el tooltip lo explica' ((-not $c.BtnSeleccionarRec.IsEnabled) -and ($c.BtnSeleccionarRec.ToolTip -match 'Aún no hay diagnóstico'))
+$ui.Recomendados = $recGuardadas
+Update-EstadoBotonesUI
+T 'Con diagnóstico se activa y el tooltip desaparece' ($c.BtnSeleccionarRec.IsEnabled -and ($null -eq $c.BtnSeleccionarRec.ToolTip))
+[void](Start-TrabajoUI -Nombre 'prueba' -Texto 'prueba de tooltips' -Parametros @{ Milisegundos = 600 })
+$busy = @($c.BtnAplicar, $c.BtnQuitarSel, $c.BtnSeleccionarRec, $c.BtnActualizarDiag, $c.BtnDeshacer, $c.BtnActualizarSesiones, $c.ChkOmitirPunto, $c.DemoBajo)
+T 'Con un trabajo en curso, cada control desactivado explica por qué (trabajo en curso)' (@($busy | Where-Object { (-not $_.IsEnabled) -and ("$($_.ToolTip)" -match 'trabajo en curso') }).Count -eq $busy.Count)
+[void](Esperar-Libre 20000)
+T 'Al terminar el trabajo se quitan esos motivos' (@($busy | Where-Object { "$($_.ToolTip)" -match 'trabajo en curso' }).Count -eq 0)
+T 'Sin administrador, Aplicar y Deshacer explican el motivo en el tooltip' ($(try { $global:PruebaAdmin = $false; function global:Test-EsAdministrador { return [bool]$global:PruebaAdmin }; Update-EstadoBotonesUI; ((-not $c.BtnAplicar.IsEnabled) -and ($c.BtnAplicar.ToolTip -match 'administrador') -and ($c.BtnDeshacer.ToolTip -match 'administrador')) } finally { Restaurar-Entorno; Update-EstadoBotonesUI }))
+
+Seccion '11d. Instancia única (mutex), señal de apertura y lanzadores'
+$nombreMutex = 'Global\OptiLow_Prueba_' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+T 'El primer proceso toma el mutex de instancia única' (Enter-InstanciaUnica -Nombre $nombreMutex)
+$hijo1 = @(& (Join-Path $PSHOME 'powershell.exe') -NoProfile -STA -ExecutionPolicy Bypass -File $PSCommandPath -ProbarInstancia $nombreMutex 2>&1 | ForEach-Object { "$_" })
+T 'Un segundo proceso NO lo consigue (ya hay una instancia)' (($hijo1 -join ' ') -match 'PRIMERA=False')
+$global:OptiLowMutexInstancia.ReleaseMutex(); $global:OptiLowMutexInstancia.Dispose()
+$hijo2 = @(& (Join-Path $PSHOME 'powershell.exe') -NoProfile -STA -ExecutionPolicy Bypass -File $PSCommandPath -ProbarInstancia $nombreMutex 2>&1 | ForEach-Object { "$_" })
+T 'Al cerrarse la primera, un nuevo arranque sí puede abrir' (($hijo2 -join ' ') -match 'PRIMERA=True')
+$textoOptiLow = Get-Content -LiteralPath (Join-Path $raiz 'OptiLow.ps1') -Raw
+T 'OptiLow.ps1 comprueba la instancia única antes de pedir el UAC' ($textoOptiLow.IndexOf('Enter-InstanciaUnica') -ge 0 -and $textoOptiLow.IndexOf('Enter-InstanciaUnica') -lt $textoOptiLow.IndexOf('$esAdmin = Test-EsAdministrador'))
+T 'Show-YaAbierto trae al frente (AppActivate) o avisa (Popup)' ((Get-Command Show-YaAbierto).Definition -match 'AppActivate' -and (Get-Command Show-YaAbierto).Definition -match 'Popup')
+T 'La señal de apertura la escribe Write-SenalApertura y también los errores' (($textoOptiLow -match 'function global:Write-SenalApertura') -and ($textoOptiLow -match '(?s)function global:Show-ErrorSinWpf.*?Write-SenalApertura'))
+$okCmd = $true
+foreach ($cmd in @('Iniciar.cmd', 'Iniciar (modo seguro).cmd')) {
+    $tc = Get-Content -LiteralPath (Join-Path $raiz $cmd) -Raw
+    if (-not (($tc -match 'Abriendo OptiLow') -and ($tc -match 'OptiLow-abierto\.flag') -and ($tc -match 'start ""'))) { $okCmd = $false }
+}
+T 'Los lanzadores muestran "Abriendo OptiLow" y esperan la señal de apertura' $okCmd
 
 Seccion '12. Diseño a cuatro tamaños (1366x728, 1093x582, 911x485, 860x460) y capturas'
 $global:PruebaRespuestas.Clear()

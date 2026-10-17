@@ -35,7 +35,7 @@ $global:OptiLowOrdenCore = @(
 $global:OptiLowFuncionesCore = @(
     'Test-DirectorioEscribible', 'Initialize-OptiLowRutas'
     'Initialize-OptiLowLog', 'Write-Log'
-    'Test-EsAdministrador', 'Invoke-RelanzarComoAdministrador', 'Test-EsCancelacionUAC', 'Test-EscritorioDeOtroUsuario'
+    'Test-EsAdministrador', 'Invoke-RelanzarComoAdministrador', 'Test-EsCancelacionUAC', 'Test-EscritorioDeOtroUsuario', 'Enter-InstanciaUnica', 'Show-YaAbierto'
     'Test-AclRespaldos', 'Initialize-CarpetaRespaldos'
     'Assert-JournalListo', 'Start-JournalSesion', 'Add-JournalEntrada', 'Get-JournalSesiones', 'Undo-JournalSesion'
     'Get-RegistroEstado', 'Set-RegistroValor', 'Remove-RegistroValor', 'Restore-RegistroEntrada'

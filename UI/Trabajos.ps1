@@ -259,7 +259,7 @@ function Add-LineaLogUI {
     $tb.Text = $Linea
     $tb.Foreground = Get-ColorLogUI -Linea $Linea
     $tb.FontFamily = New-Object System.Windows.Media.FontFamily('Consolas')
-    $tb.TextWrapping = [System.Windows.TextWrapping]::NoWrap
+    $tb.TextWrapping = [System.Windows.TextWrapping]::Wrap
     [void]$c.ListaLog.Items.Add($tb)
     [void]$ui.LineasLog.Add($Linea)
     while ($c.ListaLog.Items.Count -gt 2000) {

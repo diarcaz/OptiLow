@@ -55,6 +55,7 @@
             <Setter Property="Padding" Value="12,5"/>
             <Setter Property="Margin" Value="0,0,8,6"/>
             <Setter Property="MinHeight" Value="28"/>
+            <Setter Property="ToolTipService.ShowOnDisabled" Value="True"/>
             <Setter Property="Focusable" Value="True"/>
             <Setter Property="IsTabStop" Value="True"/>
             <Setter Property="FocusVisualStyle" Value="{StaticResource EstiloFoco}"/>
@@ -87,11 +88,13 @@
         </Style>
 
         <Style TargetType="CheckBox">
+            <Setter Property="ToolTipService.ShowOnDisabled" Value="True"/>
             <Setter Property="Foreground" Value="{StaticResource BrushTexto}"/>
             <Setter Property="FocusVisualStyle" Value="{StaticResource EstiloFoco}"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
         </Style>
         <Style TargetType="RadioButton">
+            <Setter Property="ToolTipService.ShowOnDisabled" Value="True"/>
             <Setter Property="Foreground" Value="{StaticResource BrushTexto}"/>
             <Setter Property="FocusVisualStyle" Value="{StaticResource EstiloFoco}"/>
             <Setter Property="Margin" Value="0,0,14,6"/>
@@ -237,7 +240,7 @@
         <!-- Cuerpo: navegación + vistas -->
         <Grid Grid.Row="2">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="160"/>
+                <ColumnDefinition Width="190"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
@@ -245,11 +248,11 @@
                 <ListBox x:Name="Navegacion" TabIndex="0" SelectedIndex="0" ItemContainerStyle="{StaticResource EstiloItemLista}"
                          KeyboardNavigation.DirectionalNavigation="Cycle" Margin="0,8,0,0"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto">
-                    <ListBoxItem x:Name="NavDiagnostico" Content="Diagnóstico"/>
-                    <ListBoxItem x:Name="NavOptimizaciones" Content="Optimizaciones"/>
-                    <ListBoxItem x:Name="NavInicio" Content="Programas de inicio"/>
-                    <ListBoxItem x:Name="NavRespaldo" Content="Respaldo y restauración"/>
-                    <ListBoxItem x:Name="NavRegistro" Content="Registro"/>
+                    <ListBoxItem x:Name="NavDiagnostico"><TextBlock Text="Diagnóstico" TextWrapping="Wrap"/></ListBoxItem>
+                    <ListBoxItem x:Name="NavOptimizaciones"><TextBlock Text="Optimizaciones" TextWrapping="Wrap"/></ListBoxItem>
+                    <ListBoxItem x:Name="NavInicio"><TextBlock Text="Programas de inicio" TextWrapping="Wrap"/></ListBoxItem>
+                    <ListBoxItem x:Name="NavRespaldo"><TextBlock Text="Respaldo y restauración" TextWrapping="Wrap"/></ListBoxItem>
+                    <ListBoxItem x:Name="NavRegistro"><TextBlock Text="Registro" TextWrapping="Wrap"/></ListBoxItem>
                 </ListBox>
             </Border>
 
@@ -292,12 +295,15 @@
                             <CheckBox x:Name="ChkOmitirPunto" Content="Omitir el punto de restauración (no recomendado)" TabIndex="23" Margin="4,0,0,6" VerticalAlignment="Center"/>
                         </WrapPanel>
                         <TextBlock x:Name="TxtSeleccion" Text="" Foreground="{StaticResource BrushTextoSuave}" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="TxtAyudaDeshacer" Foreground="{StaticResource BrushInfo}" TextWrapping="Wrap" Margin="0,2,0,0"
+                                   Text="Para deshacer lo aplicado: pestaña «Respaldo y restauración» > «Deshacer última sesión»."
+                                   />
                     </StackPanel>
                     <ScrollViewer Grid.Row="1" x:Name="ScrollOptimizaciones" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" TabIndex="24">
                         <StackPanel x:Name="PanelOptimizaciones" Margin="0,0,8,0"/>
                     </ScrollViewer>
                     <Border Grid.Row="2" Background="{StaticResource BrushPanel}" BorderBrush="{StaticResource BrushBorde}" BorderThickness="1" Margin="0,8,0,0">
-                        <ScrollViewer MaxHeight="84" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" IsTabStop="False">
+                        <ScrollViewer x:Name="ScrollDetalle" MaxHeight="72" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" IsTabStop="False">
                             <TextBlock x:Name="TxtDetalle" TextWrapping="Wrap" Padding="10,6"
                                        Text="Selecciona una optimización para ver qué hace y qué efecto secundario tiene."
                                        Foreground="{StaticResource BrushTextoSuave}"/>
@@ -345,7 +351,7 @@
                     </WrapPanel>
                     <Border Grid.Row="1" Background="{StaticResource BrushPanel}" BorderBrush="{StaticResource BrushBorde}" BorderThickness="1">
                         <ListBox x:Name="ListaLog" TabIndex="43" ItemContainerStyle="{StaticResource EstiloItemLista}"
-                                 ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto"
                                  VirtualizingStackPanel.IsVirtualizing="True"/>
                     </Border>
                 </Grid>

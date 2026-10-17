@@ -72,6 +72,15 @@ param(
 $ErrorActionPreference = 'Stop'
 $RaizProyecto = $PSScriptRoot
 
+function global:Write-SenalApertura {
+    <#
+    .SYNOPSIS
+        Crea %TEMP%\OptiLow-abierto.flag. Iniciar.cmd muestra "Abriendo OptiLow…" hasta que existe: se crea cuando la
+        ventana ya es visible, o cuando hay un error o un aviso que sustituye a la ventana.
+    #>
+    try { [System.IO.File]::WriteAllText((Join-Path $env:TEMP 'OptiLow-abierto.flag'), (Get-Date -Format 's')) } catch { }
+}
+
 function global:Show-ErrorSinWpf {
     <#
     .SYNOPSIS
@@ -85,6 +94,7 @@ function global:Show-ErrorSinWpf {
         [string]$Titulo = 'OptiLow - error al iniciar'
     )
 
+    Write-SenalApertura
     try { Write-Log -Nivel ERROR -Mensaje $Mensaje } catch { }
     $archivo = Join-Path $env:TEMP 'OptiLow-error.log'
     try {
@@ -187,6 +197,26 @@ if ($errorParametros) {
     exit 1
 }
 
+# --- 1a. Modo interfaz: hilo STA e instancia única (antes de pedir UAC, para no pedirlo dos veces) ---
+if ($modoInterfaz) {
+    # WPF exige un hilo STA: si el proceso no lo es, se relanza con -STA (antes del mutex, que es del proceso)
+    if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
+        $exeSta = Join-Path $PSHOME $(if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh.exe' } else { 'powershell.exe' })
+        $partesSta = @('-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath) + @(ConvertTo-ArgumentosReenvio -Parametros $PSBoundParameters)
+        $cadenaSta = ($partesSta | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
+        $procSta = Start-Process -FilePath $exeSta -ArgumentList $cadenaSta -Wait -PassThru -NoNewWindow
+        exit $procSta.ExitCode
+    }
+    # Una sola instancia: el proceso elevado espera un poco al que lo lanzó (que sale enseguida tras el UAC)
+    $esperaMutex = 0
+    if ($Elevado) { $esperaMutex = 8000 }
+    if (-not (Enter-InstanciaUnica -EsperaMs $esperaMutex)) {
+        [void](Show-YaAbierto)
+        Write-SenalApertura
+        exit 0
+    }
+}
+
 $esAdmin = Test-EsAdministrador
 if (-not $esAdmin -and -not $SinElevar) {
     if ($Elevado) {
@@ -211,14 +241,6 @@ if (-not $esAdmin -and -not $SinElevar) {
 
 # --- 1b. Modo interfaz ---
 if ($modoInterfaz) {
-    # WPF exige un hilo STA: si el proceso no lo es, se relanza con -STA
-    if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
-        $exeSta = Join-Path $PSHOME $(if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh.exe' } else { 'powershell.exe' })
-        $partesSta = @('-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath) + @(ConvertTo-ArgumentosReenvio -Parametros $PSBoundParameters)
-        $cadenaSta = ($partesSta | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
-        $procSta = Start-Process -FilePath $exeSta -ArgumentList $cadenaSta -Wait -PassThru -NoNewWindow
-        exit $procSta.ExitCode
-    }
     $codigoUi = 1
     try {
         foreach ($nombreUi in @('Interfaz.ps1', 'Trabajos.ps1', 'Inicio.ps1')) {
