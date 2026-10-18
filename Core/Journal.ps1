@@ -562,7 +562,7 @@ function Get-JournalTweakAnalisis {
                 [void]$divergencias.Add([pscustomobject]@{
                         TweakId = $TweakId
                         Entrada = $mia.Descripcion
-                        Texto   = "«$($mia.Descripcion)» ya no tiene el valor que dejó «$nombre» (alguien lo cambió después): restaurar el original lo sobrescribiría."
+                        Texto   = "«$($mia.Descripcion)» se cambió fuera de OptiLow (por ti, por Windows o por otro programa) y ya no tiene el valor que dejó «$nombre»: restaurar el original lo sobrescribiría."
                     })
             }
         }

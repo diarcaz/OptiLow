@@ -1457,8 +1457,18 @@ function Invoke-TrasDeshacerTweakUI {
         }
         elseif ($r.Estado -eq 'RequiereConfirmacion') {
             $avisos = @(@($r.Conflictos) + @($r.Divergencias) | ForEach-Object { $_.Texto })
-            $resp = Show-DialogoOptiLow -Titulo 'Deshacer podría borrar otros cambios' -Mensaje "«$Nombre» no se ha deshecho todavía. Antes de continuar, ten en cuenta esto:" -Detalles $avisos `
-                -Advertencia 'Si continúas, se restaurará el valor original y se perderá el cambio posterior. Si dudas, cancela y deshaz primero la sesión más reciente desde «Respaldo y restauración».' `
+            # Dos casos distintos: conflicto con una sesión posterior de OptiLow (se puede deshacer primero esa sesión)
+            # o valor cambiado fuera de OptiLow (no hay ninguna sesión que deshacer, así que no se da ese consejo)
+            if (@($r.Conflictos).Count -gt 0) {
+                $tituloAviso = 'Deshacer podría borrar otros cambios'
+                $adv = 'Si continúas, se restaurará el valor original y se perderá el cambio posterior de OptiLow. Si dudas, cancela y deshaz primero la sesión más reciente desde «Respaldo y restauración».'
+            }
+            else {
+                $tituloAviso = 'El valor se cambió fuera de OptiLow'
+                $adv = 'Si continúas, se restaurará el valor original que OptiLow guardó y se perderá el cambio hecho fuera de OptiLow. Si no estás seguro de ese cambio, cancela.'
+            }
+            $resp = Show-DialogoOptiLow -Titulo $tituloAviso -Mensaje "«$Nombre» no se ha deshecho todavía. Antes de continuar, ten en cuenta esto:" -Detalles $avisos `
+                -Advertencia $adv `
                 -Botones @('Cancelar', 'Deshacer de todos modos') -Predeterminado 0 -Cancelar 0 -Tipo Peligro
             if ($resp -eq 1) {
                 $refrescar = $false

@@ -142,7 +142,7 @@ Aplicar-Lote @('pr-a')
 CambiarJsonAMano 'compartida' 7
 $r = Undo-JournalTweak -TweakId 'pr-a'
 T 'RequiereConfirmacion con 1 divergencia y 0 conflictos' ($r.Estado -eq 'RequiereConfirmacion' -and @($r.Divergencias).Count -eq 1 -and @($r.Conflictos).Count -eq 0)
-T 'El aviso explica qué se sobrescribiría' ($r.Divergencias[0].Texto -match 'ya no tiene el valor')
+T 'El aviso explica qué se sobrescribiría y que se cambió fuera de OptiLow' (($r.Divergencias[0].Texto -match 'ya no tiene el valor') -and ($r.Divergencias[0].Texto -match 'fuera de OptiLow \(por ti, por Windows o por otro programa\)'))
 T 'No se tocó nada (compartida sigue 7)' ((Val 'compartida') -eq 7)
 $r = Undo-JournalTweak -TweakId 'pr-a' -Forzar
 T 'Con -Forzar: Restaurado y compartida = 0' ($r.Estado -eq 'Restaurado' -and (Val 'compartida') -eq 0)

@@ -27,6 +27,11 @@
         <SolidColorBrush x:Key="BrushTexto" Color="#E3E5E8"/>
         <SolidColorBrush x:Key="BrushTextoSuave" Color="#A9ADB5"/>
         <SolidColorBrush x:Key="BrushAcento" Color="#5B9DFF"/>
+        <!-- Botón de acción destacado (texto blanco: #1F6FEB da ~4,6:1; el hover oscuro y el pulsado, más) -->
+        <SolidColorBrush x:Key="BrushAccion" Color="#1F6FEB"/>
+        <SolidColorBrush x:Key="BrushAccionBorde" Color="#8FBBFF"/>
+        <SolidColorBrush x:Key="BrushAccionHover" Color="#1556B8"/>
+        <SolidColorBrush x:Key="BrushAccionPulsado" Color="#0F3F8A"/>
         <SolidColorBrush x:Key="BrushOk" Color="#57C078"/>
         <SolidColorBrush x:Key="BrushAviso" Color="#E8B04B"/>
         <SolidColorBrush x:Key="BrushError" Color="#F0616D"/>
@@ -90,10 +95,38 @@
         <!-- Botón destacado (p. ej. «Deshacer» de cada fila). Va como estilo, no como valores locales, para que
              al desactivarse el disparador del botón base le cambie el color del texto y se siga leyendo. -->
         <Style x:Key="BotonAcento" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Background" Value="{StaticResource BrushAcento}"/>
-            <Setter Property="BorderBrush" Value="{StaticResource BrushAcento}"/>
-            <Setter Property="Foreground" Value="{StaticResource BrushFondo}"/>
+            <Setter Property="Background" Value="{StaticResource BrushAccion}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BrushAccionBorde}"/>
+            <Setter Property="Foreground" Value="#FFFFFF"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Marco" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="3">
+                            <ContentPresenter Margin="{TemplateBinding Padding}"
+                                              HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              RecognizesAccessKey="True"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <!-- Al pasar el ratón: fondo más oscuro y borde blanco (el texto blanco sigue con buen contraste) -->
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Marco" Property="Background" Value="{StaticResource BrushAccionHover}"/>
+                                <Setter TargetName="Marco" Property="BorderBrush" Value="#FFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Marco" Property="Background" Value="{StaticResource BrushAccionPulsado}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#6F737B"/>
+                                <Setter TargetName="Marco" Property="Background" Value="{StaticResource BrushPanel}"/>
+                                <Setter TargetName="Marco" Property="BorderBrush" Value="{StaticResource BrushPanelAlt}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <Style TargetType="CheckBox">

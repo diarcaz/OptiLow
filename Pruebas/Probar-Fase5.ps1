@@ -582,6 +582,7 @@ $titulos = @($global:PruebaDialogos | ForEach-Object { $_.Titulo })
 T '6a: deshacer una optimización pide confirmación y luego avisa del conflicto con la sesión posterior' (($titulos -contains 'Deshacer una optimización') -and ($titulos -contains 'Deshacer podría borrar otros cambios'))
 $dlgAviso = $global:PruebaDialogos | Where-Object { $_.Titulo -eq 'Deshacer podría borrar otros cambios' } | Select-Object -First 1
 T '6a: el aviso nombra la optimización posterior y el botón predeterminado es Cancelar' ($dlgAviso -and (($dlgAviso.Detalles -join ' ') -match 'prueba-y') -and ($dlgAviso.Predeterminado -eq 0))
+T '6a: el aviso de CONFLICTO aconseja deshacer primero la sesión más reciente' ($dlgAviso -and ($dlgAviso.Advertencia -match 'sesión más reciente'))
 T '6a: al cancelar el aviso NO se tocó nada (k sigue en 2)' ((([System.IO.File]::ReadAllText($jsonX) | ConvertFrom-Json).k) -eq 2)
 Reset-Dialogos
 $global:PruebaRespuestas.Enqueue(1)   # confirmar «Deshacer»
@@ -590,6 +591,35 @@ Invoke-DeshacerTweakUI -Id 'prueba-x'
 [void](Esperar-Libre 60000); [void](Esperar-Libre 60000)
 $titulos = @($global:PruebaDialogos | ForEach-Object { $_.Titulo })
 T '6a: tras confirmar explícitamente se deshace y se muestra el resultado' (($titulos -contains 'Optimización deshecha') -and ((([System.IO.File]::ReadAllText($jsonX) | ConvertFrom-Json).k) -eq 0))
+
+# Valor cambiado FUERA de OptiLow (sin ninguna sesión posterior): otro aviso, sin el consejo de deshacer una sesión
+$jsonZ = Join-Path $tmp 'z6a.json'
+[System.IO.File]::WriteAllText($jsonZ, '{"kz":5}', (New-Object System.Text.UTF8Encoding($false)))
+$ez = Nueva-EntradaJson 1 'prueba-z' 0 1; $ez.Ruta = $jsonZ; $ez.Clave = @('kz')
+$sz = @{ Version = 1; Id = '20260104-000000000-1'; Inicio = '2026-01-04T00:00:00'; Estado = 'Activo'; Entradas = @($ez) }
+[System.IO.File]::WriteAllText((Join-Path $dirBk ($sz.Id + '.json')), (ConvertTo-Json -InputObject $sz -Depth 100), (New-Object System.Text.UTF8Encoding($false)))
+Reset-Dialogos
+$global:PruebaRespuestas.Enqueue(1); $global:PruebaRespuestas.Enqueue(0)   # confirmar y luego Cancelar en el aviso
+Invoke-DeshacerTweakUI -Id 'prueba-z'
+[void](Esperar-Libre 60000); [void](Esperar-Libre 60000)
+$dlgDiv = $global:PruebaDialogos | Where-Object { $_.Titulo -eq 'El valor se cambió fuera de OptiLow' } | Select-Object -First 1
+T '6a: un valor cambiado fuera de OptiLow muestra su propio aviso' ([bool]$dlgDiv)
+T '6a: ese aviso explica que lo cambió el usuario, Windows u otro programa' ($dlgDiv -and (($dlgDiv.Detalles -join ' ') -match 'fuera de OptiLow \(por ti, por Windows o por otro programa\)'))
+T '6a: ese aviso NO aconseja deshacer una sesión (no hay ninguna) y Cancelar es lo predeterminado' ($dlgDiv -and ($dlgDiv.Advertencia -notmatch 'sesión más reciente') -and ($dlgDiv.Predeterminado -eq 0))
+T '6a: al cancelar no se tocó nada (kz sigue en 5)' ((([System.IO.File]::ReadAllText($jsonZ) | ConvertFrom-Json).kz) -eq 5)
+Reset-Dialogos
+$global:PruebaRespuestas.Enqueue(1); $global:PruebaRespuestas.Enqueue(1)   # confirmar y «Deshacer de todos modos»
+Invoke-DeshacerTweakUI -Id 'prueba-z'
+[void](Esperar-Libre 60000); [void](Esperar-Libre 60000)
+T '6a: con «Deshacer de todos modos» se restaura el valor guardado (kz = 0)' ((([System.IO.File]::ReadAllText($jsonZ) | ConvertFrom-Json).kz) -eq 0)
+
+# Contraste del botón «Deshacer» (texto blanco sobre su fondo, también al pasar el ratón)
+function Luminancia-Color($col) { $f = { param($v) $x = $v / 255.0; if ($x -le 0.03928) { $x / 12.92 } else { [math]::Pow(($x + 0.055) / 1.055, 2.4) } }; 0.2126 * (& $f $col.R) + 0.7152 * (& $f $col.G) + 0.0722 * (& $f $col.B) }
+function Contraste-Blanco($col) { 1.05 / ((Luminancia-Color $col) + 0.05) }
+$cReposo = Contraste-Blanco ($c.VentanaPrincipal.FindResource('BrushAccion')).Color
+$cHover = Contraste-Blanco ($c.VentanaPrincipal.FindResource('BrushAccionHover')).Color
+Info ("Contraste del texto blanco del botón Deshacer: reposo {0:N2}:1, ratón encima {1:N2}:1" -f $cReposo, $cHover)
+T '6a: el botón Deshacer tiene contraste suficiente (≥ 4,5:1) en reposo y al pasar el ratón' (($cReposo -ge 4.5) -and ($cHover -ge 4.5))
 
 Seccion '11. Teclado'
 $c.Navegacion.SelectedIndex = 0
