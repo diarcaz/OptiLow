@@ -526,6 +526,9 @@ function New-FilaOptimizacionUI {
     $btnDeshacer = New-Object System.Windows.Controls.Button
     $btnDeshacer.Content = 'Deshacer'
     $btnDeshacer.Tag = $Def.Id
+    # Destacado (color de acento) para que se vea que existe y no se confunda con los botones grises
+    $estiloAcento = $global:OptiLowUI.C.VentanaPrincipal.TryFindResource('BotonAcento')
+    if ($estiloAcento) { $btnDeshacer.Style = $estiloAcento }
     $btnDeshacer.Padding = (New-EspesorUI '10,1')
     $btnDeshacer.Margin = (New-EspesorUI '12,0,0,0')
     $btnDeshacer.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
@@ -640,13 +643,18 @@ function Update-FilaUI {
     if ($puedeDeshacer) { $Fila.BtnDeshacer.Visibility = 'Visible' } else { $Fila.BtnDeshacer.Visibility = 'Collapsed' }
     if ($Fila.Estado -eq 'Aplicado') {
         if ($Fila.Deshacible) { $Fila.Check.ToolTip = 'Ya está aplicada. Pulsa «Deshacer» en esta fila para revertirla.' }
-        else { $Fila.Check.ToolTip = 'Ya está aplicada, pero no hay un respaldo de OptiLow para deshacerla (estaba así antes o se aplicó fuera de OptiLow).' }
+        elseif ($global:OptiLow.DirRespaldos) { $Fila.Check.ToolTip = 'Ya estaba así en este equipo: OptiLow no la cambió y por eso no guardó nada para deshacerla (no es un error). Si quieres revertirla, hazlo a mano desde Windows.' }
+        else { $Fila.Check.ToolTip = 'Ya está aplicada. Sin acceso al journal de respaldo no se puede saber si la aplicó OptiLow ni deshacerla desde aquí.' }
     }
     elseif ($Fila.Estado -eq 'NoAplica') { $Fila.Check.ToolTip = 'No aplica en este equipo.' }
     elseif ($Fila.Estado -eq 'Comprobando') { $Fila.Check.ToolTip = 'Comprobando el estado…' }
     else { $Fila.Check.ToolTip = $Fila.Def.Nombre }
 
+    # Texto de la segunda línea: recomendación (o no) + aviso de "ya estaba así" en las filas aplicadas sin respaldo
+    $txt = ''
+    $colorRec = 'BrushTextoSuave'
     if ($Fila.Recomendado) {
+        $colorRec = 'BrushAcento'
         # Una fila ya aplicada no debe sonar a "falta aplicarla"
         if ($Fila.Estado -eq 'Aplicado') {
             $txt = 'Aplicada (recomendada para este equipo'
@@ -657,18 +665,22 @@ function Update-FilaUI {
             $txt = 'Recomendada para este equipo'
             if ($Fila.Motivo) { $txt += ': ' + $Fila.Motivo }
         }
-        $Fila.TxtRec.Text = $txt
-        $Fila.TxtRec.Visibility = 'Visible'
     }
     elseif ($Fila.Motivo) {
-        $Fila.TxtRec.Text = 'No recomendada: ' + $Fila.Motivo
-        $Fila.TxtRec.Foreground = Get-PincelUI -Clave 'BrushTextoSuave'
+        $txt = 'No recomendada: ' + $Fila.Motivo
+    }
+    if (($Fila.Estado -eq 'Aplicado') -and (-not $Fila.Deshacible) -and $global:OptiLow.DirRespaldos) {
+        $nota = 'Ya estaba así en este equipo (OptiLow no lo cambió)'
+        if ($txt) { $txt += ' · ' + $nota } else { $txt = $nota }
+    }
+    if ($txt) {
+        $Fila.TxtRec.Text = $txt
+        $Fila.TxtRec.Foreground = Get-PincelUI -Clave $colorRec
         $Fila.TxtRec.Visibility = 'Visible'
     }
     else {
         $Fila.TxtRec.Visibility = 'Collapsed'
     }
-    if ($Fila.Recomendado) { $Fila.TxtRec.Foreground = Get-PincelUI -Clave 'BrushAcento' }
 }
 
 function Update-EstadosFilasUI {
@@ -979,7 +991,7 @@ function Invoke-TrasAplicarUI {
         }
         $titulo = 'Resumen'; $tipo = 'Info'
         if ($malos -gt 0) { $titulo = 'Resumen: hubo fallos'; $tipo = 'Peligro' } elseif ($aviso) { $tipo = 'Aviso' }
-        $msg = 'Resultado de cada optimización. Para REVERTIR una, pulsa «Deshacer» en su fila de Optimizaciones. Para revertir todo lo de esta ejecución: pestaña «Respaldo y restauración» > «Deshacer última sesión».'
+        $msg = 'Resultado de cada optimización. Puedes deshacer cada optimización con el botón Deshacer de su fila. Para revertir todo lo de esta ejecución: pestaña «Respaldo y restauración» > «Deshacer última sesión».'
         [void](Show-DialogoOptiLow -Titulo $titulo -Mensaje $msg -Detalles @($lineas) -Advertencia $aviso -Tipo $tipo -Botones @('Cerrar'))
     }
     Update-EstadosAsincronoUI

@@ -377,6 +377,7 @@ Invoke-AplicarSeleccionUI
 [void](Esperar-Libre 60000)
 $cont = Get-Contadores
 T '7a: se mostró la confirmación y luego el resumen' (($global:PruebaDialogos.Count -ge 2) -and ($global:PruebaDialogos[0].Titulo -eq 'Confirmar cambios') -and ($global:PruebaDialogos[1].Titulo -like 'Resumen*'))
+T '7a: el resumen dice que cada optimización se puede deshacer con el botón Deshacer de su fila' ($global:PruebaDialogos[1].Mensaje -match 'deshacer cada optimización con el botón Deshacer de su fila')
 T '7a: la confirmación lista cada cambio con su descripción' (@($global:PruebaDialogos[0].Detalles).Count -ge 4)
 T '7a: UNA sola sesión nueva del journal' ($cont.Nueva -eq 1)
 T '7a: se intentó crear un punto de restauración (una vez)' ($cont.Puntos -eq 1)
@@ -753,8 +754,18 @@ $c.Navegacion.SelectedIndex = 0
 T 'Optimizaciones: texto visible que explica que se deshace desde «Respaldo y restauración»' (($c.TxtAyudaDeshacer.Text -match 'Respaldo y restauración') -and ($c.TxtAyudaDeshacer.Text -match 'Deshacer última sesión'))
 Update-EstadosFilasUI -Estados @([pscustomobject]@{ Id = $idA; Estado = 'Aplicado'; Detalle = ''; Deshacible = $true })
 T 'Una fila "Aplicado" con respaldo muestra el botón «Deshacer» y su tooltip lo explica' (($ui.Filas[$idA].BtnDeshacer.Visibility -eq 'Visible') -and ($ui.Filas[$idA].Check.ToolTip -match 'Deshacer'))
+$dirBkGuardado = $global:OptiLow.DirRespaldos
+$global:OptiLow.DirRespaldos = $tmp   # hay journal: una fila aplicada sin respaldo "ya estaba así"
 Update-EstadosFilasUI -Estados @([pscustomobject]@{ Id = $idA; Estado = 'Aplicado'; Detalle = ''; Deshacible = $false })
-T 'Una fila "Aplicado" sin respaldo de OptiLow no muestra el botón y lo explica en su tooltip' (($ui.Filas[$idA].BtnDeshacer.Visibility -eq 'Collapsed') -and ($ui.Filas[$idA].Check.ToolTip -match 'no hay un respaldo'))
+T 'Una fila "Aplicado" sin respaldo no muestra el botón y su tooltip explica que ya estaba así (no es un error)' (($ui.Filas[$idA].BtnDeshacer.Visibility -eq 'Collapsed') -and ($ui.Filas[$idA].Check.ToolTip -match 'Ya estaba así') -and ($ui.Filas[$idA].Check.ToolTip -match 'no es un error'))
+T 'Esa fila dice «Ya estaba así en este equipo (OptiLow no lo cambió)» en su segunda línea' (($ui.Filas[$idA].TxtRec.Visibility -eq 'Visible') -and ($ui.Filas[$idA].TxtRec.Text -match 'Ya estaba así en este equipo \(OptiLow no lo cambió\)'))
+Update-EstadosFilasUI -Estados @([pscustomobject]@{ Id = $idA; Estado = 'Aplicado'; Detalle = ''; Deshacible = $true })
+T 'Una fila aplicada CON respaldo no dice «Ya estaba así»' ($ui.Filas[$idA].TxtRec.Text -notmatch 'Ya estaba así')
+$global:OptiLow.DirRespaldos = $null   # sin journal no se puede afirmar que "ya estaba así"
+Update-EstadosFilasUI -Estados @([pscustomobject]@{ Id = $idA; Estado = 'Aplicado'; Detalle = ''; Deshacible = $false })
+T 'Sin journal NO se afirma «Ya estaba así»' ($ui.Filas[$idA].TxtRec.Text -notmatch 'Ya estaba así')
+$global:OptiLow.DirRespaldos = $dirBkGuardado
+T 'El botón «Deshacer» usa el estilo destacado (BotonAcento), distinto de los grises' ([object]::ReferenceEquals($ui.Filas[$idA].BtnDeshacer.Style, $c.VentanaPrincipal.TryFindResource('BotonAcento')))
 Update-EstadosFilasUI -Estados @([pscustomobject]@{ Id = $idA; Estado = 'Pendiente'; Detalle = ''; Deshacible = $true })
 T 'Una fila pendiente nunca muestra «Deshacer»' ($ui.Filas[$idA].BtnDeshacer.Visibility -eq 'Collapsed')
 # Una fila aplicada y recomendada no debe sonar a "falta aplicarla"
