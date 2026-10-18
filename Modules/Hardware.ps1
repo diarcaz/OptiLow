@@ -393,60 +393,15 @@ function Get-HwProgramasInicio {
     .SYNOPSIS
         Cuenta los programas de inicio HABILITADOS (solo lee).
     .DESCRIPTION
-        Fuentes: Run de HKCU, HKLM y WOW6432Node, y las carpetas de Inicio del usuario y común. Los deshabilitados
-        desde el Administrador de tareas se descuentan con StartupApproved (primer byte 03 = deshabilitado,
-        02 = habilitado). La asociación Run <-> StartupApproved\Run/Run32/StartupFolder se valida en la VM
-        comparando con el Administrador de tareas.
+        Usa la misma lectura que la pestaña «Programas de inicio» (Get-ProgramasInicio en Modules/ProgramasInicio.ps1):
+        Run de HKCU, HKLM y WOW6432Node y las carpetas de Inicio, descontando los deshabilitados con StartupApproved.
+        No cuenta las apps de la Store que arrancan solas (se gestionan desde Configuración).
     #>
-    $habilitados = 0
-    $deshabilitados = 0
-    $detalle = New-Object System.Collections.ArrayList
-
-    $aprobado = {
-        param($Hive, $SubClave, $Nombre)
-        $v = Get-RegistroEstado -Ruta ("{0}:\{1}" -f $Hive, $SubClave) -Nombre $Nombre
-        if ($v.ValorExiste -and ($v.Dato -is [byte[]]) -and ($v.Dato.Length -gt 0)) { return (($v.Dato[0] -band 1) -eq 1) }   # 03 = deshabilitado
-        return $false
-    }
-
-    $fuentesRun = @(
-        @{ Hive = 'HKCU'; Ruta = 'Software\Microsoft\Windows\CurrentVersion\Run'; Aprob = 'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'; Etiqueta = 'HKCU Run' },
-        @{ Hive = 'HKLM'; Ruta = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Run'; Aprob = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'; Etiqueta = 'HKLM Run' },
-        @{ Hive = 'HKLM'; Ruta = 'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run'; Aprob = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32'; Etiqueta = 'HKLM WOW6432Node Run' }
-    )
-    foreach ($f in $fuentesRun) {
-        $base = Open-RegistroBase -Hive $(if ($f.Hive -eq 'HKCU') { [Microsoft.Win32.RegistryHive]::CurrentUser } else { [Microsoft.Win32.RegistryHive]::LocalMachine })
-        try {
-            $k = $base.OpenSubKey($f.Ruta, $false)
-            if ($k) {
-                try {
-                    foreach ($n in $k.GetValueNames()) {
-                        if (-not $n) { continue }
-                        $off = & $aprobado $f.Hive $f.Aprob $n
-                        if ($off) { $deshabilitados++ } else { $habilitados++ }
-                        [void]$detalle.Add([pscustomobject]@{ Origen = $f.Etiqueta; Nombre = $n; Habilitado = (-not $off) })
-                    }
-                }
-                finally { $k.Dispose() }
-            }
-        }
-        finally { $base.Dispose() }
-    }
-
-    $carpetas = @(
-        @{ Ruta = [Environment]::GetFolderPath('Startup'); Hive = 'HKCU'; Aprob = 'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder'; Etiqueta = 'Carpeta Inicio (usuario)' },
-        @{ Ruta = [Environment]::GetFolderPath('CommonStartup'); Hive = 'HKLM'; Aprob = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder'; Etiqueta = 'Carpeta Inicio (común)' }
-    )
-    foreach ($c in $carpetas) {
-        if ((-not $c.Ruta) -or (-not (Test-Path -LiteralPath $c.Ruta))) { continue }
-        foreach ($item in (Get-ChildItem -LiteralPath $c.Ruta -File -Force -ErrorAction SilentlyContinue)) {
-            if ($item.Name -ieq 'desktop.ini') { continue }
-            $off = & $aprobado $c.Hive $c.Aprob $item.Name
-            if ($off) { $deshabilitados++ } else { $habilitados++ }
-            [void]$detalle.Add([pscustomobject]@{ Origen = $c.Etiqueta; Nombre = $item.Name; Habilitado = (-not $off) })
-        }
-    }
-    return [pscustomobject]@{ Habilitados = $habilitados; Deshabilitados = $deshabilitados; Detalle = @($detalle) }
+    $detalle = @(Get-ProgramasInicio | ForEach-Object {
+            [pscustomobject]@{ Origen = $_.Origen; Nombre = $_.Nombre; Habilitado = $_.Habilitado }
+        })
+    $hab = @($detalle | Where-Object { $_.Habilitado }).Count
+    return [pscustomobject]@{ Habilitados = $hab; Deshabilitados = ($detalle.Count - $hab); Detalle = $detalle }
 }
 
 function Get-HwDsreg {

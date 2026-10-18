@@ -49,6 +49,8 @@ function Initialize-EstadoUI {
         SesionesCache     = @()
         PincelCache       = @{}
         Cerrada           = $false
+        InicioCargado     = $false
+        FilasInicio       = @{}
     }
 }
 
@@ -417,6 +419,7 @@ function Update-EstadoBotonesUI {
         Set-AyudaControlUI -Control $b -Razon $razonAplicar
         if (-not $razonAplicar) { $b.ToolTip = 'Deshacer esta optimización (restaura los valores originales guardados en el journal).' }
     }
+    Update-BotonesInicioUI
     Update-SeleccionUI
 }
 
@@ -470,6 +473,7 @@ function Set-VistaUI {
     if (($Indice -eq 3) -and (-not $ui.SesionesCargadas) -and (-not $ui.Trabajo) -and $global:OptiLow.DirRespaldos) {
         Update-SesionesUI
     }
+    if (($Indice -eq 2) -and (-not $ui.InicioCargado) -and (-not $ui.Trabajo)) { Update-InicioUI }
     if (($Indice -eq 4) -and ($c.ListaLog.Items.Count -gt 0)) {
         $c.ListaLog.ScrollIntoView($c.ListaLog.Items[$c.ListaLog.Items.Count - 1])
     }
@@ -1284,6 +1288,7 @@ function Get-NombreOptimizacionUI {
         [AllowNull()][AllowEmptyString()][string]$Id
     )
     if (-not $Id) { return 'Cambio sin optimización asociada' }
+    if ($Id -eq 'programas-inicio') { return 'Programas de inicio' }
     $def = Get-Tweak -Id $Id | Select-Object -First 1
     if ($def) { return [string]$def.Nombre }
     return $Id
@@ -1522,6 +1527,164 @@ function Invoke-TrasDeshacerUI {
 }
 
 # ---------------------------------------------------------------------------------------------------------------
+# Programas de inicio
+# ---------------------------------------------------------------------------------------------------------------
+
+function Get-MarcadosInicioUI {
+    # Auxiliar interna: programas marcados (casillas) con su estado, para deshabilitar o habilitar.
+    $ui = $global:OptiLowUI
+    $res = New-Object System.Collections.ArrayList
+    if (-not $ui.FilasInicio) { return @() }
+    foreach ($id in @($ui.FilasInicio.Keys)) {
+        $f = $ui.FilasInicio[$id]
+        if ($f.Casilla.IsChecked -eq $true) { [void]$res.Add($f.Programa) }
+    }
+    return @($res)
+}
+
+function Update-BotonesInicioUI {
+    # Auxiliar interna: activa o desactiva los botones de la pestaña según trabajo, permisos y marcas.
+    $ui = $global:OptiLowUI
+    $c = $ui.C
+    if ((-not $c) -or (-not $c.BtnDeshabilitarInicio)) { return }
+    $ocupado = $null
+    if ($ui.Trabajo) { $ocupado = 'Hay un trabajo en curso (' + $ui.Trabajo.Texto + '): espera a que termine.' }
+    $motivo = Get-MotivoNoAplicarUI
+    $razon = $ocupado; if (-not $razon) { $razon = $motivo }
+    $marcados = @(Get-MarcadosInicioUI)
+    $quitar = @($marcados | Where-Object { $_.Habilitado -and (-not $_.Protegido) })
+    $poner = @($marcados | Where-Object { -not $_.Habilitado })
+    $rDes = $razon; if ((-not $rDes) -and ($quitar.Count -eq 0)) { $rDes = 'Marca primero algún programa habilitado.' }
+    $rHab = $razon; if ((-not $rHab) -and ($poner.Count -eq 0)) { $rHab = 'Marca primero algún programa deshabilitado.' }
+    Set-AyudaControlUI -Control $c.BtnDeshabilitarInicio -Razon $rDes
+    Set-AyudaControlUI -Control $c.BtnHabilitarInicio -Razon $rHab
+    Set-AyudaControlUI -Control $c.BtnActualizarInicio -Razon $ocupado
+}
+
+function Update-InicioUI {
+    <#
+    .SYNOPSIS
+        Carga en segundo plano los programas de inicio y las apps de la Store, y pinta la pestaña.
+    #>
+    $ui = $global:OptiLowUI
+    if ($ui.Trabajo) { return }
+    [void](Start-TrabajoUI -Nombre 'inicio-listar' -Texto 'leyendo los programas de inicio' -AlTerminar {
+            param($res)
+            $ui = $global:OptiLowUI
+            $c = $ui.C
+            $c.PanelInicio.Children.Clear()
+            $ui.FilasInicio = @{}
+            if ($res.Error) {
+                $c.TxtInicioInfo.Text = "No se pudieron leer los programas de inicio: $($res.Error)"
+                return
+            }
+            $dato = $res.Salida | Select-Object -First 1
+            if (-not $dato) { $c.TxtInicioInfo.Text = 'No se recibieron datos de los programas de inicio.'; return }
+            $ui.InicioCargado = $true
+            $progs = @($dato.Programas | Where-Object { $null -ne $_ })
+            $hab = @($progs | Where-Object { $_.Habilitado }).Count
+            $c.TxtInicioInfo.Text = "$($progs.Count) programa(s): $hab habilitado(s) y $($progs.Count - $hab) deshabilitado(s). Es la lista de Run y de las carpetas de Inicio; las apps de la Store se cuentan aparte (abajo)."
+            foreach ($p in $progs) {
+                $marco = New-Object System.Windows.Controls.Border
+                $marco.Background = Get-PincelUI -Clave 'BrushPanel'
+                $marco.BorderBrush = Get-PincelUI -Clave 'BrushBorde'
+                $marco.BorderThickness = (New-EspesorUI '1')
+                $marco.Padding = (New-EspesorUI '10,6')
+                $marco.Margin = (New-EspesorUI '0,0,0,6')
+                $pila = New-Object System.Windows.Controls.StackPanel
+                $cas = New-Object System.Windows.Controls.CheckBox
+                $cas.Content = $p.Nombre
+                $cas.FontWeight = [System.Windows.FontWeights]::SemiBold
+                $cas.Tag = $p.Id
+                $cas.Add_Click({ Invoke-ManejadorUI { Update-BotonesInicioUI } })
+                if ($p.Protegido) {
+                    $cas.IsEnabled = $false
+                    $cas.ToolTip = 'Componente de seguridad de Windows: OptiLow no lo deshabilita.'
+                }
+                [void]$pila.Children.Add($cas)
+                if ($p.Habilitado) { $txtEstado = 'Habilitado'; $colEstado = 'BrushOk' } else { $txtEstado = 'Deshabilitado'; $colEstado = 'BrushTextoSuave' }
+                if ($p.Protegido) { $txtEstado += ' (protegido)' }
+                [void]$pila.Children.Add((New-TextoUI -Texto ('{0}  ·  {1}' -f $txtEstado, $p.Origen) -Color $colEstado -Tam 13 -Margen '20,0,0,0'))
+                if ($p.Comando) { [void]$pila.Children.Add((New-TextoUI -Texto $p.Comando -Color 'BrushTextoSuave' -Tam 12 -Margen '20,2,0,0')) }
+                $marco.Child = $pila
+                $marco.ToolTip = $(if ($p.RequiereAdmin) { 'Este programa es de todo el equipo: cambiarlo requiere administrador.' } else { 'Programa de tu cuenta de usuario.' })
+                [void]$c.PanelInicio.Children.Add($marco)
+                $ui.FilasInicio[$p.Id] = @{ Casilla = $cas; Programa = $p }
+            }
+            $store = @($dato.Store | Where-Object { $null -ne $_ })
+            [void]$c.PanelInicio.Children.Add((New-TextoUI -Texto 'Apps de la Store con inicio automático' -Negrita -Margen '0,10,0,2'))
+            if ($store.Count -eq 0) {
+                [void]$c.PanelInicio.Children.Add((New-TextoUI -Texto 'No se detectó ninguna.' -Color 'BrushTextoSuave'))
+            }
+            else {
+                [void]$c.PanelInicio.Children.Add((New-TextoUI -Color 'BrushInfo' -Texto "Se gestionan desde Configuración > Aplicaciones > Inicio (OptiLow no las toca). $($store.Count) app(s) declaran una tarea de inicio; aquí no se sabe si está habilitada: míralo en esa pantalla."))
+                [void]$c.PanelInicio.Children.Add((New-TextoUI -Texto (($store | ForEach-Object { $_.Nombre } | Select-Object -Unique) -join ', ') -Color 'BrushTextoSuave' -Tam 12 -Margen '0,2,0,0'))
+            }
+            Update-BotonesInicioUI
+        })
+}
+
+function Invoke-CambiarInicioUI {
+    <#
+    .SYNOPSIS
+        Botones «Deshabilitar marcados» / «Habilitar marcados»: confirmación, trabajo 'inicio-cambiar' (una sesión del
+        journal) y resultado. Nunca borra entradas.
+    #>
+    param(
+        [Parameter(Mandatory)][bool]$Habilitar
+    )
+
+    $ui = $global:OptiLowUI
+    if ($ui.Trabajo) { return }
+    $motivo = Get-MotivoNoAplicarUI
+    if ($motivo) {
+        [void](Show-DialogoOptiLow -Titulo 'No se puede cambiar' -Mensaje $motivo -Tipo Aviso -Botones @('Entendido'))
+        return
+    }
+    $marcados = @(Get-MarcadosInicioUI)
+    if ($Habilitar) { $sel = @($marcados | Where-Object { -not $_.Habilitado }) }
+    else { $sel = @($marcados | Where-Object { $_.Habilitado -and (-not $_.Protegido) }) }
+    if ($sel.Count -eq 0) { return }
+    $verbo = $(if ($Habilitar) { 'habilitar' } else { 'deshabilitar' })
+    $det = @($sel | ForEach-Object { '{0}  [{1}]' -f $_.Nombre, $_.Origen })
+    $adv = $null
+    if (-not $Habilitar) { $adv = 'Si algún programa es un antivirus, un controlador (audio, ratón, teclado) o un servicio de tu fabricante, mejor déjalo habilitado. Se puede volver a habilitar desde esta pestaña.' }
+    $textoBoton = $verbo.Substring(0, 1).ToUpper() + $verbo.Substring(1)
+    $r = Show-DialogoOptiLow -Titulo ('Confirmar: ' + $verbo) -Mensaje ("Se va a $verbo $($sel.Count) programa(s) de inicio. No se borra nada.") -Detalles $det -Advertencia $adv `
+        -Botones @('Cancelar', $textoBoton) -Predeterminado 0 -Cancelar 0 -Tipo Aviso
+    if ($r -ne 1) { Write-Log -Mensaje 'Cambio de programas de inicio cancelado por el usuario.'; return }
+    $ids = @($sel | ForEach-Object { $_.Id })
+    [void](Start-TrabajoUI -Nombre 'inicio-cambiar' -Texto "$verbo programas de inicio" -Parametros @{ Ids = $ids; Habilitar = $Habilitar } -AlTerminar {
+            param($res)
+            Invoke-TrasCambiarInicioUI -Resultado $res
+        })
+}
+
+function Invoke-TrasCambiarInicioUI {
+    # Auxiliar interna: resultado del cambio y refresco de la lista y de las sesiones.
+    param(
+        [Parameter(Mandatory)]$Resultado
+    )
+
+    $ui = $global:OptiLowUI
+    if ($Resultado.Error) {
+        [void](Show-DialogoOptiLow -Titulo 'Error al cambiar el inicio' -Mensaje $Resultado.Error -Tipo Peligro -Botones @('Cerrar'))
+    }
+    else {
+        $r = Get-ResultadoUnicoUI -Resultado $Resultado
+        if ($r) {
+            $det = @()
+            if (@($r.NoAplica).Count -gt 0) { $det += 'No aplicables (ya no existen o están protegidos): ' + (@($r.NoAplica) -join ', ') }
+            if (@($r.Fallidos).Count -gt 0) { $det += 'Fallaron (mira el registro): ' + (@($r.Fallidos) -join ', ') }
+            $tipo = $(if (@($r.Fallidos).Count -gt 0) { 'Peligro' } else { 'Info' })
+            [void](Show-DialogoOptiLow -Titulo 'Programas de inicio' -Mensaje ("Cambiados: $(@($r.Cambiados).Count). Sin cambios: $(@($r.SinCambios).Count). Puedes revertirlo con el botón contrario o desde «Respaldo y restauración». Los cambios se notan en el próximo inicio de sesión.") -Detalles $det -Tipo $tipo -Botones @('Cerrar'))
+        }
+    }
+    $ui.SesionesCargadas = $false
+    Update-InicioUI
+}
+
+# ---------------------------------------------------------------------------------------------------------------
 # Registro (log)
 # ---------------------------------------------------------------------------------------------------------------
 
@@ -1620,6 +1783,9 @@ function Connect-EventosUI {
     $c.BtnAplicar.Add_Click({ Invoke-ManejadorUI { Invoke-AplicarSeleccionUI } })
     $c.BtnActualizarSesiones.Add_Click({ Invoke-ManejadorUI { $global:OptiLowUI.SesionesCargadas = $false; Update-SesionesUI } })
     $c.BtnDeshacer.Add_Click({ Invoke-ManejadorUI { Invoke-DeshacerUI } })
+    $c.BtnActualizarInicio.Add_Click({ Invoke-ManejadorUI { Update-InicioUI } })
+    $c.BtnDeshabilitarInicio.Add_Click({ Invoke-ManejadorUI { Invoke-CambiarInicioUI -Habilitar $false } })
+    $c.BtnHabilitarInicio.Add_Click({ Invoke-ManejadorUI { Invoke-CambiarInicioUI -Habilitar $true } })
     $c.BtnCopiarLog.Add_Click({ Invoke-ManejadorUI { Copy-LogUI } })
     $c.BtnAbrirLogs.Add_Click({ Invoke-ManejadorUI { Open-CarpetaLogsUI } })
     $c.BtnLimpiarLog.Add_Click({ Invoke-ManejadorUI { Clear-VistaLogUI } })

@@ -249,7 +249,7 @@ for ($i = 0; $i -lt 5; $i++) {
     T "Pestaña $($i + 1): solo se ve '$($vistas[$i])'" (($visibles.Count -eq 1) -and ($visibles[0] -eq $vistas[$i]))
 }
 $c.Navegacion.SelectedIndex = 0
-T 'Programas de inicio es un marcador de la fase 6' ($c.TxtInicioMarcador.Text -match 'fase 6')
+T 'Programas de inicio (6b): existen la lista y sus tres botones' ($c.PanelInicio -and $c.BtnActualizarInicio -and $c.BtnDeshabilitarInicio -and $c.BtnHabilitarInicio)
 
 Seccion '4. Trabajos de arranque: motor, estados y diagnóstico (en segundo plano)'
 $ok = Wait-UI -Condicion { (-not $global:OptiLowUI.Trabajo) -and $global:OptiLowUI.Hardware } -LimiteMs 180000

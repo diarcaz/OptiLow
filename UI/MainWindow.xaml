@@ -353,13 +353,25 @@
                     </Border>
                 </Grid>
 
-                <!-- Programas de inicio (marcador hasta la fase 6) -->
+                <!-- Programas de inicio -->
                 <Grid x:Name="VistaInicio" Visibility="Collapsed">
-                    <StackPanel VerticalAlignment="Top">
-                        <TextBlock Text="Programas de inicio" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
-                        <TextBlock x:Name="TxtInicioMarcador" TextWrapping="Wrap" Foreground="{StaticResource BrushTextoSuave}"
-                                   Text="Disponible en la fase 6. Aquí podrás ver y deshabilitar (sin borrar) lo que arranca con Windows, igual que el Administrador de tareas, y volver a habilitarlo."/>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Margin="0,0,0,4">
+                        <WrapPanel>
+                            <Button x:Name="BtnActualizarInicio" Content="Actuali_zar lista" TabIndex="50"/>
+                            <Button x:Name="BtnDeshabilitarInicio" Content="_Deshabilitar marcados" TabIndex="51"/>
+                            <Button x:Name="BtnHabilitarInicio" Content="_Habilitar marcados" TabIndex="52"/>
+                        </WrapPanel>
+                        <TextBlock x:Name="TxtInicioInfo" Text="" Foreground="{StaticResource BrushTextoSuave}" TextWrapping="Wrap"/>
+                        <TextBlock Foreground="{StaticResource BrushInfo}" TextWrapping="Wrap" Margin="0,2,0,0"
+                                   Text="Deshabilitar NO borra nada: solo marca el programa como desactivado, igual que el Administrador de tareas. Puedes volver a habilitarlo aquí cuando quieras. Un programa deshabilitado deja de abrirse al iniciar sesión, pero sigue instalado."/>
                     </StackPanel>
+                    <ScrollViewer Grid.Row="1" x:Name="ScrollInicio" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" TabIndex="53">
+                        <StackPanel x:Name="PanelInicio" Margin="0,0,8,0"/>
+                    </ScrollViewer>
                 </Grid>
 
                 <!-- Respaldo y restauración (mínimo) -->

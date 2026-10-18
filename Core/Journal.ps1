@@ -402,6 +402,7 @@ function Get-JournalNombreTweak {
         [AllowNull()][AllowEmptyString()][string]$TweakId
     )
     if (-not $TweakId) { return 'un cambio sin optimización asociada' }
+    if ($TweakId -eq 'programas-inicio') { return 'Programas de inicio' }
     $def = $null
     if (Get-Command Get-Tweak -ErrorAction SilentlyContinue) { $def = Get-Tweak -Id $TweakId | Select-Object -First 1 }
     if ($def) { return [string]$def.Nombre }

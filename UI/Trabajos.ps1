@@ -94,6 +94,19 @@ if ($Forzar) { Undo-JournalTweak -TweakId $TweakId -Forzar }
 else { Undo-JournalTweak -TweakId $TweakId }
 '@
 
+    'inicio-listar' = @'
+$lista = @(Get-ProgramasInicio)
+$store = @()
+try { $store = @(Get-ProgramasInicioStore) }
+catch { Write-Log -Nivel WARN -Mensaje "No se pudieron leer las apps de la Store con inicio automático: $($_.Exception.Message)" }
+[pscustomobject]@{ Programas = $lista; Store = $store }
+'@
+
+    'inicio-cambiar' = @'
+param($Ids, $Habilitar)
+Invoke-ProgramasInicioCambio -Ids @($Ids) -Habilitar ([bool]$Habilitar)
+'@
+
     # Trabajo de prueba (sin efectos): sirve para comprobar que la interfaz no se congela
     prueba = @'
 param($Milisegundos)
